@@ -1,0 +1,11 @@
+/.terraform*
+*.tfstate
+*.backup
+*.out
+*.tf
+*.exe
+.DS_Store
+terraform-provider-ssh
+build/
+dist/
+.idea/
