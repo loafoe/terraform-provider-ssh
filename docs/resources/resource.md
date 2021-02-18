@@ -27,6 +27,7 @@ resource "ssh_resource" "init" {
 
 The following arguments are supported:
 
+* `host` - (Required) The IP address or DNS hostname of the target server
 * `user` - (Required) The username to use for provision activities using SSH
 * `private_key` - (Required) The SSH private key to use for provision activities
 * `file` - (Optional) Block specifying content to be written to the container host after creation
