@@ -42,6 +42,7 @@ func resourceResource() *schema.Resource {
 				Type:         schema.TypeString,
 				Optional:     true,
 				RequiredWith: []string{"private_key"},
+				ForceNew:     true,
 			},
 			"private_key": {
 				Type:         schema.TypeString,
@@ -54,6 +55,12 @@ func resourceResource() *schema.Resource {
 				MaxItems: 100,
 				Optional: true,
 				Elem:     &schema.Schema{Type: schema.TypeString},
+				ForceNew: true,
+			},
+			"commands_after_file_changes": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  true,
 			},
 			"file": {
 				Type:     schema.TypeSet,
@@ -72,6 +79,18 @@ func resourceResource() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 						},
+						"permissions": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"owner": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"group": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
 					},
 				},
 			},
@@ -79,19 +98,66 @@ func resourceResource() *schema.Resource {
 	}
 }
 
-func resourceResourceDelete(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+func resourceResourceDelete(_ context.Context, d *schema.ResourceData, _ interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-
+	d.SetId("")
 	return diags
 }
 
 func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
+	config := m.(*Config)
 
+	bastionHost := d.Get("bastion_host").(string)
+	user := d.Get("user").(string)
+	privateKey := d.Get("private_key").(string)
+	host := d.Get("host").(string)
+	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
+
+	// Collect SSH details
+	privateIP := host
+	ssh := &easyssh.MakeConfig{
+		User:   user,
+		Server: privateIP,
+		Port:   "22",
+		Key:    privateKey,
+		Proxy:  http.ProxyFromEnvironment,
+		Bastion: easyssh.DefaultConfig{
+			User:   user,
+			Server: bastionHost,
+			Port:   "22",
+			Key:    privateKey,
+		},
+	}
+
+	if d.HasChange("file") {
+		createFiles, diags := collectFilesToCreate(d)
+		if len(diags) > 0 {
+			return diags
+		}
+		if err := copyFiles(ssh, config, createFiles); err != nil {
+			return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
+		}
+		if commandsAfterFileChanges {
+			commands, diags := collectCommands(d)
+			if len(diags) > 0 {
+				return diags
+			}
+			// Run commands
+			for i := 0; i < len(commands); i++ {
+				stdout, stderr, done, err := ssh.Run(commands[i], 5*time.Minute)
+				if err != nil {
+					return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
+				} else {
+					_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
+				}
+			}
+		}
+	}
 	return diags
 }
 
-func resourceResourceRead(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+func resourceResourceRead(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	return diags
@@ -182,6 +248,30 @@ func copyFiles(ssh *easyssh.MakeConfig, config *Config, createFiles []provisionF
 			_ = ssh.WriteFile(buffer, int64(buffer.Len()), f.Destination)
 			_, _ = config.Debug("Created remote file %s:%s: %d bytes\n", ssh.Server, f.Destination, len(f.Content))
 		}
+		// Permissions change
+		if f.Permissions != "" {
+			outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chmod %s \"%s\"", f.Permissions, f.Destination))
+			_, _ = config.Debug("Permissions file %s:%s: %v %v\n", f.Destination, f.Permissions, outStr, errStr)
+			if err != nil {
+				return err
+			}
+		}
+		// Owner
+		if f.Owner != "" {
+			outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chown %s \"%s\"", f.Owner, f.Destination))
+			_, _ = config.Debug("Owner file %s:%s: %v %v\n", f.Destination, f.Owner, outStr, errStr)
+			if err != nil {
+				return err
+			}
+		}
+		// Group
+		if f.Group != "" {
+			outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chgrp %s \"%s\"", f.Group, f.Destination))
+			_, _ = config.Debug("Group file %s:%s: %v %v\n", f.Destination, f.Group, outStr, errStr)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -201,6 +291,9 @@ type provisionFile struct {
 	Source      string
 	Content     string
 	Destination string
+	Permissions string
+	Owner       string
+	Group       string
 }
 
 func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnostics) {
@@ -214,6 +307,9 @@ func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnos
 				Source:      mVi["source"].(string),
 				Content:     mVi["content"].(string),
 				Destination: mVi["destination"].(string),
+				Permissions: mVi["permissions"].(string),
+				Owner:       mVi["owner"].(string),
+				Group:       mVi["group"].(string),
 			}
 			if file.Source == "" && file.Content == "" {
 				diags = append(diags, diag.Diagnostic{

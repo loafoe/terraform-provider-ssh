@@ -6,18 +6,18 @@ The following example uses the internal provisioning support for bootstrapping a
 
 ```hcl
 resource "ssh_resource" "init" {
-  host = "private-ec2.instance.com"
+  host         = "private-ec2.instance.com"
   bastion_host = "bastion.host.com"
-  user = var.user
-  private_key = var.private_key
+  user         = var.user
+  private_key  = var.private_key
 
   file {
-    content = "echo Hello world"
+    content     = "echo Hello world"
     destination = "/tmp/hello.sh"
+    permissions = "0700"
   }
   
   commands = [
-    "chmod +x /tmp/hello.sh",
     "/tmp/hello.sh"
   ]
 }
@@ -35,12 +35,17 @@ The following arguments are supported:
 * `bastion_host` - (Optional) The bastion host to use.  When not set, this will be deduced from the container host location
 * `triggers` - (Optional, list(string)) An list of strings which when changes will trigger recreation of the resource triggering
   all create files and commands executions.
+* `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
 
 Each `file` block can contain the following fields. Use either `content` or `source`:
 
 * `source` - (Optional, file path) Content of the file. Conflicts with `content`
 * `content` - (Optional, string) Content of the file. Conflicts with `source`
 * `destination` - (Required, string) Remote filename to store the content in
+* `permissions` - (Optional, string) The file permissions. Default permissions are "0644"
+* `owner` - (Optional, string) The file owner. Default owner the SSH user
+* `group` - (Optional, string) The file group. Default group is the SSH user's group
+
 
 ## Attributes Reference
 
