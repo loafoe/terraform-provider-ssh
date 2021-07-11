@@ -52,10 +52,9 @@ func resourceResource() *schema.Resource {
 				RequiredWith: []string{"user"},
 			},
 			"host_private_key": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Sensitive:    true,
-				RequiredWith: []string{"user"},
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
 			},
 			"commands": {
 				Type:     schema.TypeList,
