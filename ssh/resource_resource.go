@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/loafoe/easyssh-proxy/v2"
 	"math/rand"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/loafoe/easyssh-proxy/v2"
 )
 
 func resourceResource() *schema.Resource {
@@ -49,6 +50,11 @@ func resourceResource() *schema.Resource {
 				Optional:     true,
 				Sensitive:    true,
 				RequiredWith: []string{"user"},
+			},
+			"host_private_key": {
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
 			},
 			"commands": {
 				Type:     schema.TypeList,
@@ -111,8 +117,13 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
 	privateKey := d.Get("private_key").(string)
+	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
+
+	if len(hostPrivateKey) == 0 {
+		hostPrivateKey = privateKey
+	}
 
 	// Collect SSH details
 	privateIP := host
@@ -120,7 +131,7 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 		User:   user,
 		Server: privateIP,
 		Port:   "22",
-		Key:    privateKey,
+		Key:    hostPrivateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
@@ -170,7 +181,12 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
 	privateKey := d.Get("private_key").(string)
+	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
+
+	if len(hostPrivateKey) == 0 {
+		hostPrivateKey = privateKey
+	}
 
 	// Fetch files first before starting provisioning
 	createFiles, diags := collectFilesToCreate(d)
@@ -196,7 +212,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		User:   user,
 		Server: privateIP,
 		Port:   "22",
-		Key:    privateKey,
+		Key:    hostPrivateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
