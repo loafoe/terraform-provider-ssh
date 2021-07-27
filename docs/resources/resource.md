@@ -9,6 +9,7 @@ resource "ssh_resource" "init" {
   host              = "private-ec2.instance.com"
   bastion_host      = "bastion.host.com"
   user              = var.user
+  host_user         = var.host_user
   private_key       = var.private_key
   host_private_key  = var.host_private_key
 
