@@ -9,6 +9,7 @@ resource "ssh_resource" "init" {
   host              = "private-ec2.instance.com"
   bastion_host      = "bastion.host.com"
   user              = var.user
+  host_user         = var.host_user
   private_key       = var.private_key
   host_private_key  = var.host_private_key
 
@@ -30,6 +31,7 @@ The following arguments are supported:
 
 * `host` - (Required) The IP address or DNS hostname of the target server
 * `user` - (Required) The username to use for provision activities using SSH
+* `host_user` - (Required) A distinct username to use for provision activities when provided. When missing the provided `user` is used
 * `private_key` - (Required) The SSH private key to use for provision activities
 * `host_private_key` - (Optional) A distinct SSH private key to use for provision activities when provided. When missing the provided `private_key` is used
 * `file` - (Optional) Block specifying content to be written to the container host after creation

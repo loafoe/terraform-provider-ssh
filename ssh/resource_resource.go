@@ -45,6 +45,11 @@ func resourceResource() *schema.Resource {
 				RequiredWith: []string{"private_key"},
 				ForceNew:     true,
 			},
+			"host_user": {
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
 			"private_key": {
 				Type:         schema.TypeString,
 				Optional:     true,
@@ -116,10 +121,15 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
+	hostUser := d.Get("host_user").(string)
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
+
+	if len(hostUser) == 0 {
+		hostUser = user
+	}
 
 	if len(hostPrivateKey) == 0 {
 		hostPrivateKey = privateKey
@@ -128,7 +138,7 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	// Collect SSH details
 	privateIP := host
 	ssh := &easyssh.MakeConfig{
-		User:   user,
+		User:   hostUser,
 		Server: privateIP,
 		Port:   "22",
 		Key:    hostPrivateKey,
@@ -180,9 +190,14 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
+	hostUser := d.Get("host_user").(string)
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
+
+	if len(hostUser) == 0 {
+		hostUser = user
+	}
 
 	if len(hostPrivateKey) == 0 {
 		hostPrivateKey = privateKey
@@ -209,7 +224,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	// Collect SSH details
 	privateIP := host
 	ssh := &easyssh.MakeConfig{
-		User:   user,
+		User:   hostUser,
 		Server: privateIP,
 		Port:   "22",
 		Key:    hostPrivateKey,
