@@ -59,6 +59,11 @@ func resourceResource() *schema.Resource {
 				Optional:  true,
 				Sensitive: true,
 			},
+			"agent": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  true,
+			},
 			"commands": {
 				Type:     schema.TypeList,
 				MaxItems: 100,
@@ -124,6 +129,7 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
+	agent := d.Get("agent").(bool)
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -147,6 +153,9 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 		},
 	}
 	if hostPrivateKey != "" {
+		if agent {
+			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
+		}
 		ssh.Key = hostPrivateKey
 	}
 	if privateKey != "" {
@@ -196,6 +205,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
+	agent := d.Get("agent").(bool)
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -237,6 +247,9 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		},
 	}
 	if hostPrivateKey != "" {
+		if agent {
+			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
+		}
 		ssh.Key = hostPrivateKey
 	}
 	if privateKey != "" {
