@@ -40,10 +40,9 @@ func resourceResource() *schema.Resource {
 				Optional: true,
 			},
 			"user": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				RequiredWith: []string{"private_key"},
-				ForceNew:     true,
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
 			},
 			"host_user": {
 				Type:     schema.TypeString,
@@ -51,15 +50,19 @@ func resourceResource() *schema.Resource {
 				ForceNew: true,
 			},
 			"private_key": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Sensitive:    true,
-				RequiredWith: []string{"user"},
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
 			},
 			"host_private_key": {
 				Type:      schema.TypeString,
 				Optional:  true,
 				Sensitive: true,
+			},
+			"agent": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
 			},
 			"commands": {
 				Type:     schema.TypeList,
@@ -126,6 +129,7 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
+	agent := d.Get("agent").(bool)
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -141,14 +145,21 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 		User:   hostUser,
 		Server: privateIP,
 		Port:   "22",
-		Key:    hostPrivateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
 			Server: bastionHost,
 			Port:   "22",
-			Key:    privateKey,
 		},
+	}
+	if hostPrivateKey != "" {
+		if agent {
+			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
+		}
+		ssh.Key = hostPrivateKey
+	}
+	if privateKey != "" {
+		ssh.Bastion.Key = privateKey
 	}
 
 	if d.HasChange("file") {
@@ -194,6 +205,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
+	agent := d.Get("agent").(bool)
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -217,8 +229,8 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		if user == "" {
 			return diag.FromErr(fmt.Errorf("user must be set when 'commands' is specified"))
 		}
-		if privateKey == "" {
-			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified"))
+		if !agent && privateKey == "" {
+			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified and 'agent' is false"))
 		}
 	}
 	// Collect SSH details
@@ -227,14 +239,21 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		User:   hostUser,
 		Server: privateIP,
 		Port:   "22",
-		Key:    hostPrivateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
 			Server: bastionHost,
 			Port:   "22",
-			Key:    privateKey,
 		},
+	}
+	if hostPrivateKey != "" {
+		if agent {
+			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
+		}
+		ssh.Key = hostPrivateKey
+	}
+	if privateKey != "" {
+		ssh.Bastion.Key = privateKey
 	}
 
 	// Provision files
