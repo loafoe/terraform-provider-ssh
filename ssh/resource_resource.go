@@ -62,7 +62,7 @@ func resourceResource() *schema.Resource {
 			"agent": {
 				Type:     schema.TypeBool,
 				Optional: true,
-				Default:  true,
+				Default:  false,
 			},
 			"commands": {
 				Type:     schema.TypeList,
@@ -229,8 +229,8 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		if user == "" {
 			return diag.FromErr(fmt.Errorf("user must be set when 'commands' is specified"))
 		}
-		if privateKey == "" {
-			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified"))
+		if !agent && privateKey == "" {
+			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified and 'agent' is false"))
 		}
 	}
 	// Collect SSH details
