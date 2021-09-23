@@ -10,8 +10,8 @@ resource "ssh_resource" "init" {
   bastion_host      = "bastion.host.com"
   user              = var.user
   host_user         = var.host_user
-  private_key       = var.private_key
-  host_private_key  = var.host_private_key
+  # An ssh-agent with your SSH private keys should be running
+  # Use 'private_key' to set the SSH key otherwise
 
   file {
     content     = "echo Hello world"
@@ -32,8 +32,8 @@ The following arguments are supported:
 * `host` - (Required) The IP address or DNS hostname of the target server
 * `user` - (Required) The username to use for provision activities using SSH
 * `host_user` - (Optional) A distinct username to use for provision activities when provided. When missing the provided `user` is used
-* `private_key` - (Required) The SSH private key to use for provision activities
-* `host_private_key` - (Optional) A distinct SSH private key to use for provision activities when provided. When missing the provided `private_key` is used
+* `private_key` - (Optional) The SSH private key to use for provision activities. Recommend to use ssh-agent
+* `host_private_key` - (Optional) A distinct SSH private key to use for provision activities when provided. Recommend to use ssh-agent
 * `file` - (Optional) Block specifying content to be written to the container host after creation
 * `commands` - (Required, list(string)) List of commands to execute after creation of container host
 * `bastion_host` - (Optional) The bastion host to use.  When not set, this will be deduced from the container host location

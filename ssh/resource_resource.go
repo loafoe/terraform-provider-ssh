@@ -40,10 +40,9 @@ func resourceResource() *schema.Resource {
 				Optional: true,
 			},
 			"user": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				RequiredWith: []string{"private_key"},
-				ForceNew:     true,
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
 			},
 			"host_user": {
 				Type:     schema.TypeString,
@@ -51,10 +50,9 @@ func resourceResource() *schema.Resource {
 				ForceNew: true,
 			},
 			"private_key": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Sensitive:    true,
-				RequiredWith: []string{"user"},
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
 			},
 			"host_private_key": {
 				Type:      schema.TypeString,
@@ -141,14 +139,18 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 		User:   hostUser,
 		Server: privateIP,
 		Port:   "22",
-		Key:    hostPrivateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
 			Server: bastionHost,
 			Port:   "22",
-			Key:    privateKey,
 		},
+	}
+	if hostPrivateKey != "" {
+		ssh.Key = hostPrivateKey
+	}
+	if privateKey != "" {
+		ssh.Bastion.Key = privateKey
 	}
 
 	if d.HasChange("file") {
@@ -227,14 +229,18 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		User:   hostUser,
 		Server: privateIP,
 		Port:   "22",
-		Key:    hostPrivateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
 			Server: bastionHost,
 			Port:   "22",
-			Key:    privateKey,
 		},
+	}
+	if hostPrivateKey != "" {
+		ssh.Key = hostPrivateKey
+	}
+	if privateKey != "" {
+		ssh.Bastion.Key = privateKey
 	}
 
 	// Provision files
