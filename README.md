@@ -8,7 +8,7 @@
 
 This is a terraform provider to copy files and run commands remotely over SSH. Unlike the Terraform provisioners which are described as
  a "last resort" this provider embraces the concept of pushing and executing content to compute instances over SSH. Apart from bastion
- hosts it also supports tunneling over HTTP proxies. This is especially problematic if you are running Terraform from inside a corporate
+ hosts it also supports tunneling over HTTP proxies. This is very useful if you are running Terraform from inside a corporate
  network and need to reach out to your instances.
 
 # Using the provider
