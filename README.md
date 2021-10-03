@@ -6,14 +6,14 @@
 
 ## Overview
 
-This is a terraform provider to copy files and run commands remotely over SSH. Unlike the Terraform provisioners which are described as
+This is a Terraform provider to copy files, run commands remotely and capture results via SSH. Unlike the Terraform provisioners which are described as
  a "last resort" this provider embraces the concept of pushing and executing content to compute instances over SSH. Apart from bastion
  hosts it also supports tunneling over HTTP proxies. This is very useful if you are running Terraform from inside a corporate
  network and need to reach out to your instances.
 
 ## Using the provider
 
-**Terraform 0.14**: To install this provider, copy and paste this code into your Terraform configuration. Then, run terraform init.
+**Terraform 0.14+**: To install this provider, copy and paste this code into your Terraform configuration. Then, run terraform init.
 
 ```terraform
 terraform {
