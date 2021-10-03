@@ -76,6 +76,10 @@ func resourceResource() *schema.Resource {
 				Optional: true,
 				Default:  true,
 			},
+			"result": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 			"file": {
 				Type:     schema.TypeSet,
 				Optional: true,
@@ -176,14 +180,18 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 				return diags
 			}
 			// Run commands
+			var stdout, stderr string
+			var done bool
+			var err error
 			for i := 0; i < len(commands); i++ {
-				stdout, stderr, done, err := ssh.Run(commands[i], 5*time.Minute)
+				stdout, stderr, done, err = ssh.Run(commands[i], 5*time.Minute)
 				_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
 				if err != nil {
 					_, _ = config.Debug("error: %v\n", err)
 					return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
 				}
 			}
+			d.Set("result", stdout)
 		}
 	}
 	return diags
@@ -262,15 +270,18 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	}
 
 	// Run commands
+	var stdout, stderr string
+	var done bool
+	var err error
 	for i := 0; i < len(commands); i++ {
-		stdout, stderr, done, err := ssh.Run(commands[i], 5*time.Minute)
+		stdout, stderr, done, err = ssh.Run(commands[i], 5*time.Minute)
 		_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
 		if err != nil {
 			_, _ = config.Debug("error: %v\n", err)
 			return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
 		}
 	}
-
+	d.Set("result", stdout)
 	d.SetId(fmt.Sprintf("%d", rand.Int()))
 	return diags
 }
