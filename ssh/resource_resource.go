@@ -191,7 +191,7 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 					return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
 				}
 			}
-			d.Set("result", stdout)
+			_ = d.Set("result", stdout)
 		}
 	}
 	return diags
@@ -281,7 +281,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 			return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
 		}
 	}
-	d.Set("result", stdout)
+	_ = d.Set("result", stdout)
 	d.SetId(fmt.Sprintf("%d", rand.Int()))
 	return diags
 }
