@@ -2,8 +2,6 @@
 
 - Documentation: https://registry.terraform.io/providers/loafoe/ssh/latest/docs
 
-<img src="https://cdn.rawgit.com/hashicorp/terraform-website/master/content/source/assets/images/logo-hashicorp.svg" width="600px">
-
 ## Overview
 
 This is a Terraform provider to copy files, run commands remotely and capture results via SSH. Unlike the Terraform provisioners which are described as
