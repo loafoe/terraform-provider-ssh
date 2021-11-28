@@ -180,18 +180,11 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 				return diags
 			}
 			// Run commands
-			var stdout, stderr string
-			var done bool
-			var err error
-			for i := 0; i < len(commands); i++ {
-				stdout, stderr, done, err = ssh.Run(commands[i], 5*time.Minute)
-				_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
-				if err != nil {
-					_, _ = config.Debug("error: %v\n", err)
-					return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
-				}
+			stdout, errDiags, err := runCommands(commands, ssh, m)
+			if err != nil {
+				return errDiags
 			}
-			d.Set("result", stdout)
+			_ = d.Set("result", stdout)
 		}
 	}
 	return diags
@@ -270,20 +263,44 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	}
 
 	// Run commands
+	stdout, errDiags, err := runCommands(commands, ssh, m)
+	if err != nil {
+		return errDiags
+	}
+
+	_ = d.Set("result", stdout)
+	d.SetId(fmt.Sprintf("%d", rand.Int()))
+	return diags
+}
+
+func runCommands(commands []string, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
+	var diags diag.Diagnostics
 	var stdout, stderr string
 	var done bool
 	var err error
+	config := m.(*Config)
+
 	for i := 0; i < len(commands); i++ {
 		stdout, stderr, done, err = ssh.Run(commands[i], 5*time.Minute)
 		_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
 		if err != nil {
 			_, _ = config.Debug("error: %v\n", err)
-			return append(diags, diag.FromErr(fmt.Errorf("command [%s]: %w", commands[i], err))...)
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  fmt.Sprintf("execution of command '%s' failed. stdout output", commands[i]),
+				Detail:   stdout,
+			})
+			if stderr != "" {
+				diags = append(diags, diag.Diagnostic{
+					Severity: diag.Error,
+					Summary:  "stderr output",
+					Detail:   stderr,
+				})
+			}
+			return stdout, diags, err
 		}
 	}
-	d.Set("result", stdout)
-	d.SetId(fmt.Sprintf("%d", rand.Int()))
-	return diags
+	return stdout, diags, nil
 }
 
 func copyFiles(ssh *easyssh.MakeConfig, config *Config, createFiles []provisionFile) error {
