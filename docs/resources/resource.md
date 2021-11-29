@@ -1,4 +1,5 @@
 # ssh_resource
+
 Supports copying and running commands over an
 SSH connection.
 
@@ -51,7 +52,6 @@ Each `file` block can contain the following fields. Use either `content` or `sou
 * `permissions` - (Optional, string) The file permissions. Default permissions are "0644"
 * `owner` - (Optional, string) The file owner. Default owner the SSH user
 * `group` - (Optional, string) The file group. Default group is the SSH user's group
-
 
 ## Attributes Reference
 

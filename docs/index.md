@@ -1,6 +1,7 @@
 # ssh provider
+
 Provides a resource which allows you to copy, run commands and capture output
-via SSH. It supports Bastion host connection and HTTP proxies, 
+via SSH. It supports Bastion host connection and HTTP proxies,
 so it can work from behind corporate networks as well.
 
 Typically, this resource is used in place of a `null_provider` or instead
