@@ -21,6 +21,8 @@ resource "ssh_resource" "init" {
     permissions = "0700"
   }
   
+  timeout = "15m"
+  
   commands = [
     "/tmp/hello.sh"
   ]
@@ -43,6 +45,7 @@ The following arguments are supported:
 * `triggers` - (Optional, list(string)) An list of strings which when changes will trigger recreation of the resource triggering
   all create files and commands executions.
 * `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
+* `timeout` - (Optional) Time to wait before considering a command to have timed out. Default is `5m`. Accept seconds (e.g. `180s`) or minutes (e.g. `30m`)
 
 Each `file` block can contain the following fields. Use either `content` or `source`:
 

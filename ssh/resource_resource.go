@@ -76,6 +76,11 @@ func resourceResource() *schema.Resource {
 				Optional: true,
 				Default:  true,
 			},
+			"timeout": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Default:  "5m",
+			},
 			"result": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -134,6 +139,12 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	host := d.Get("host").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 	agent := d.Get("agent").(bool)
+	timeout := d.Get("timeout").(string)
+
+	timeoutValue, err := calcTimeout(timeout)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -180,7 +191,7 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 				return diags
 			}
 			// Run commands
-			stdout, errDiags, err := runCommands(commands, ssh, m)
+			stdout, errDiags, err := runCommands(commands, time.Duration(timeoutValue), ssh, m)
 			if err != nil {
 				return errDiags
 			}
@@ -207,6 +218,12 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
 	agent := d.Get("agent").(bool)
+	timeout := d.Get("timeout").(string)
+
+	timeoutValue, err := calcTimeout(timeout)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -263,7 +280,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	}
 
 	// Run commands
-	stdout, errDiags, err := runCommands(commands, ssh, m)
+	stdout, errDiags, err := runCommands(commands, time.Duration(timeoutValue), ssh, m)
 	if err != nil {
 		return errDiags
 	}
@@ -273,7 +290,7 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	return diags
 }
 
-func runCommands(commands []string, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
+func runCommands(commands []string, timeout time.Duration, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
 	var diags diag.Diagnostics
 	var stdout, stderr string
 	var done bool
@@ -281,7 +298,7 @@ func runCommands(commands []string, ssh *easyssh.MakeConfig, m interface{}) (str
 	config := m.(*Config)
 
 	for i := 0; i < len(commands); i++ {
-		stdout, stderr, done, err = ssh.Run(commands[i], 5*time.Minute)
+		stdout, stderr, done, err = ssh.Run(commands[i], timeout*time.Second)
 		_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
 		if err != nil {
 			_, _ = config.Debug("error: %v\n", err)
@@ -433,4 +450,33 @@ func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnos
 		}
 	}
 	return files, diags
+}
+
+func calcTimeout(timeout string) (int, error) {
+	var unit string
+	var value int
+	scanned, err := fmt.Sscanf(timeout, "%d%s", &value, &unit)
+	if err != nil {
+		return 0, fmt.Errorf("calcTimeout scan [%s]: %w", timeout, err)
+	}
+	if scanned != 2 {
+		return 0, fmt.Errorf("invalid timeout format: %s", timeout)
+	}
+	seconds := 0
+	switch unit {
+	case "s":
+		seconds = value
+	case "m":
+		seconds = 60 * value
+	case "h":
+		seconds = 3600 * value
+	case "d":
+		seconds = 86400 * value
+	default:
+		return 0, fmt.Errorf("unit '%s' not supported", unit)
+	}
+	if seconds < 60 {
+		return 0, fmt.Errorf("a value less than 60 seconds is not supported")
+	}
+	return seconds, nil
 }
