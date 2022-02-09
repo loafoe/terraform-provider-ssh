@@ -37,6 +37,8 @@ resource "ssh_resource" "example" {
     permissions = "0700"
   }
 
+  timeout = "3m"
+
   commands = [
     "/home/alpine/test.sh",
   ]
