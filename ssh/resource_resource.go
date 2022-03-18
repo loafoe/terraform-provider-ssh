@@ -35,9 +35,19 @@ func resourceResource() *schema.Resource {
 				Required: true,
 				ForceNew: true,
 			},
+			"port": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Default:  "22",
+			},
 			"bastion_host": {
 				Type:     schema.TypeString,
 				Optional: true,
+			},
+			"bastion_port": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Default:  "22",
 			},
 			"user": {
 				Type:     schema.TypeString,
@@ -140,6 +150,8 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 	agent := d.Get("agent").(bool)
 	timeout := d.Get("timeout").(string)
+	port := d.Get("port").(string)
+	bastionPort := d.Get("bastion_port").(string)
 
 	timeoutValue, err := calcTimeout(timeout)
 	if err != nil {
@@ -159,12 +171,12 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	ssh := &easyssh.MakeConfig{
 		User:   hostUser,
 		Server: privateIP,
-		Port:   "22",
+		Port:   port,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
 			Server: bastionHost,
-			Port:   "22",
+			Port:   bastionPort,
 		},
 	}
 	if hostPrivateKey != "" {
@@ -219,6 +231,8 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	host := d.Get("host").(string)
 	agent := d.Get("agent").(bool)
 	timeout := d.Get("timeout").(string)
+	port := d.Get("port").(string)
+	bastionPort := d.Get("bastion_port").(string)
 
 	timeoutValue, err := calcTimeout(timeout)
 	if err != nil {
@@ -256,12 +270,12 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	ssh := &easyssh.MakeConfig{
 		User:   hostUser,
 		Server: privateIP,
-		Port:   "22",
+		Port:   port,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
 			Server: bastionHost,
-			Port:   "22",
+			Port:   bastionPort,
 		},
 	}
 	if hostPrivateKey != "" {
