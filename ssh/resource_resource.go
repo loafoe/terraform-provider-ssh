@@ -354,10 +354,10 @@ func copyFiles(ssh *easyssh.MakeConfig, config *Config, createFiles []provisionF
 		} else {
 			buffer := bytes.NewBufferString(f.Content)
 			if err := ssh.WriteFile(buffer, int64(buffer.Len()), f.Destination); err != nil {
-				_, _ = config.Debug("Failed to copy content to remote file %s:%s: %v\n", ssh.Server, f.Destination, err)
+				_, _ = config.Debug("Failed to copy content to remote file %s:%s:%s: %v\n", ssh.Server, ssh.Port, f.Destination, err)
 				return err
 			}
-			_, _ = config.Debug("Created remote file %s:%s: %d bytes\n", ssh.Server, f.Destination, len(f.Content))
+			_, _ = config.Debug("Created remote file %s:%s:%s: %d bytes\n", ssh.Server, ssh.Port, f.Destination, len(f.Content))
 		}
 		// Permissions change
 		if f.Permissions != "" {
