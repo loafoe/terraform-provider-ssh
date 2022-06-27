@@ -8,6 +8,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
+const (
+	DebugLog = "SSH_DEBUG_LOG"
+)
+
 // Provider
 func Provider() *schema.Provider {
 	return &schema.Provider{
@@ -16,6 +20,7 @@ func Provider() *schema.Provider {
 				Type:        schema.TypeString,
 				Optional:    true,
 				Description: "File to write debugging info to",
+				DefaultFunc: schema.EnvDefaultFunc(DebugLog, ""),
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
