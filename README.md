@@ -54,8 +54,8 @@ output for further use in Terraform.
 
 ## Development requirements
 
--	[Terraform](https://www.terraform.io/downloads.html) 0.15.0 or newer
--	[Go](https://golang.org/doc/install) 1.17 or newer (to build the provider plugin)
+-	[Terraform](https://www.terraform.io/downloads.html) 1.0.0 or newer
+-	[Go](https://golang.org/doc/install) 1.18 or newer (to build the provider plugin)
 
 ## Issues
 
