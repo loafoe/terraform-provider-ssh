@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## v2.0.0
+
+- Add 'when' argument (#37). Thanks @arbourd
+
 ## v1.2.0
 
 - Option to configure SSH ports to use for bastion and host server (#26)
