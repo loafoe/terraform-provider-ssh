@@ -7,14 +7,18 @@ The following example uses the internal provisioning support for bootstrapping a
 
 ```hcl
 resource "ssh_resource" "init" {
-  host              = "private-ec2.instance.com"
-  bastion_host      = "bastion.host.com"
-  user              = var.user
-  host_user         = var.host_user
-  agent             = true
+  # The default behaviour is to run file blocks and commands at create time
+  # You can also specify 'destroy' to run the commands at destroy time
+  when = "create"
+  
+  host         = "private-ec2.instance.com"
+  bastion_host = "bastion.host.com"
+  user         = var.user
+  host_user    = var.host_user
+  agent        = true
   # An ssh-agent with your SSH private keys should be running
   # Use 'private_key' to set the SSH key otherwise
-
+  
   file {
     content     = "echo Hello world"
     destination = "/tmp/hello.sh"
@@ -35,6 +39,7 @@ The following arguments are supported:
 
 * `host` - (Required) The IP address or DNS hostname of the target server
 * `user` - (Required) The username to use for provision activities using SSH
+* `when` - (Optional) Determines when the file blocks and commands are executed. Options are `create` or `destroy`. Default: `"create"`
 * `host_user` - (Optional) A distinct username to use for provision activities when provided. When missing the provided `user` is used
 * `private_key` - (Optional) The SSH private key to use for provision activities. Recommend to use ssh-agent
 * `host_private_key` - (Optional) A distinct SSH private key to use for provision activities when provided. Recommend to use ssh-agent

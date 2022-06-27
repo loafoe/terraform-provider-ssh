@@ -8,6 +8,8 @@ Typically, this resource is used in place of a `null_provider` or instead
 of the Terraform `remote-exec` provisioner where you are in a firewalled
 environment and need to use a HTTP proxy to punch through.
 
+Using the `when` attribute you can also choose to run the commands at destroy time.
+
 ## Example usage
 
 ```hcl
@@ -16,6 +18,8 @@ resource "ssh_resource" "example" {
   bastion_host = "jumpgate.remote-host.com"
   user         = "alpine"
   agent        = true
+  
+  when         = "create" # Default
 
   file {
     content     = "echo '{\"hello\":\"world\"}' && exit 0"

@@ -11,19 +11,35 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/loafoe/easyssh-proxy/v2"
 )
 
 func resourceResource() *schema.Resource {
 	return &schema.Resource{
-		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
-		},
+		SchemaVersion: 1,
 		CreateContext: resourceResourceCreate,
 		ReadContext:   resourceResourceRead,
 		UpdateContext: resourceResourceUpdate,
 		DeleteContext: resourceResourceDelete,
+		Importer: &schema.ResourceImporter{
+			StateContext: schema.ImportStatePassthroughContext,
+		},
+		StateUpgraders: []schema.StateUpgrader{
+			{
+				Type:    resourceResourceV0().CoreConfigSchema().ImpliedType(),
+				Upgrade: patchResourceV0,
+				Version: 0,
+			},
+		},
 		Schema: map[string]*schema.Schema{
+			"when": {
+				Description:  "Determines when the commands is to be executed. Options are 'create' or 'destroy'",
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      "create",
+				ValidateFunc: validation.StringInSlice([]string{"create", "destroy"}, false),
+			},
 			"triggers": {
 				Description: "A map of arbitrary strings that, when changed, will force the 'hsdp_container_host_exec' resource to be replaced, re-running any associated commands.",
 				Type:        schema.TypeMap,
@@ -131,14 +147,30 @@ func resourceResource() *schema.Resource {
 	}
 }
 
-func resourceResourceDelete(_ context.Context, d *schema.ResourceData, _ interface{}) diag.Diagnostics {
+func resourceResourceDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	d.SetId("")
+
+	when := d.Get("when").(string)
+
+	if when == "destroy" {
+		diags = mainRun(ctx, d, m, false)
+	}
+	if !hasErrors(diags) {
+		d.SetId("")
+	}
 	return diags
 }
 
-func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-	var diags diag.Diagnostics
+func hasErrors(diags diag.Diagnostics) bool {
+	for _, d := range diags {
+		if d.Severity == diag.Error {
+			return true
+		}
+	}
+	return false
+}
+
+func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate bool) diag.Diagnostics {
 	config := m.(*Config)
 
 	bastionHost := d.Get("bastion_host").(string)
@@ -147,92 +179,11 @@ func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interfa
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
+	agent := d.Get("agent").(bool)
+	timeout := d.Get("timeout").(string)
+	port := d.Get("port").(string)
+	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
-	agent := d.Get("agent").(bool)
-	timeout := d.Get("timeout").(string)
-	port := d.Get("port").(string)
-	bastionPort := d.Get("bastion_port").(string)
-
-	timeoutValue, err := calcTimeout(timeout)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	if len(hostUser) == 0 {
-		hostUser = user
-	}
-
-	if len(hostPrivateKey) == 0 {
-		hostPrivateKey = privateKey
-	}
-
-	// Collect SSH details
-	privateIP := host
-	ssh := &easyssh.MakeConfig{
-		User:   hostUser,
-		Server: privateIP,
-		Port:   port,
-		Proxy:  http.ProxyFromEnvironment,
-		Bastion: easyssh.DefaultConfig{
-			User:   user,
-			Server: bastionHost,
-			Port:   bastionPort,
-		},
-	}
-	if hostPrivateKey != "" {
-		if agent {
-			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
-		}
-		ssh.Key = hostPrivateKey
-	}
-	if privateKey != "" {
-		ssh.Bastion.Key = privateKey
-	}
-
-	if d.HasChange("file") {
-		createFiles, diags := collectFilesToCreate(d)
-		if len(diags) > 0 {
-			return diags
-		}
-		if err := copyFiles(ssh, config, createFiles); err != nil {
-			return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
-		}
-		if commandsAfterFileChanges {
-			commands, diags := collectCommands(d)
-			if len(diags) > 0 {
-				return diags
-			}
-			// Run commands
-			stdout, errDiags, err := runCommands(commands, time.Duration(timeoutValue), ssh, m)
-			if err != nil {
-				return errDiags
-			}
-			_ = d.Set("result", stdout)
-		}
-	}
-	return diags
-}
-
-func resourceResourceRead(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
-	var diags diag.Diagnostics
-
-	return diags
-}
-
-func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-	var diags diag.Diagnostics
-	config := m.(*Config)
-
-	bastionHost := d.Get("bastion_host").(string)
-	user := d.Get("user").(string)
-	hostUser := d.Get("host_user").(string)
-	privateKey := d.Get("private_key").(string)
-	hostPrivateKey := d.Get("host_private_key").(string)
-	host := d.Get("host").(string)
-	agent := d.Get("agent").(bool)
-	timeout := d.Get("timeout").(string)
-	port := d.Get("port").(string)
-	bastionPort := d.Get("bastion_port").(string)
 
 	timeoutValue, err := calcTimeout(timeout)
 	if err != nil {
@@ -288,9 +239,17 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 		ssh.Bastion.Key = privateKey
 	}
 
+	if onUpdate && !(d.HasChange("file") || d.HasChange("commands")) {
+		return diags
+	}
+
 	// Provision files
 	if err := copyFiles(ssh, config, createFiles); err != nil {
 		return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
+	}
+
+	if onUpdate && !commandsAfterFileChanges {
+		return diags
 	}
 
 	// Run commands
@@ -300,7 +259,37 @@ func resourceResourceCreate(_ context.Context, d *schema.ResourceData, m interfa
 	}
 
 	_ = d.Set("result", stdout)
-	d.SetId(fmt.Sprintf("%d", rand.Int()))
+
+	return diags
+}
+
+func resourceResourceUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
+	when := d.Get("when").(string)
+
+	if when == "create" {
+		diags = mainRun(ctx, d, m, true)
+	}
+	return diags
+}
+
+func resourceResourceRead(_ context.Context, _ *schema.ResourceData, _ interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	return diags
+}
+
+func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	when := d.Get("when").(string)
+
+	if when == "create" {
+		diags = mainRun(ctx, d, m, false)
+	}
+	if !hasErrors(diags) {
+		d.SetId(fmt.Sprintf("%d", rand.Int()))
+	}
 	return diags
 }
 
