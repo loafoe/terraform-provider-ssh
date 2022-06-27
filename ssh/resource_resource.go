@@ -153,7 +153,7 @@ func resourceResourceDelete(ctx context.Context, d *schema.ResourceData, m inter
 	when := d.Get("when").(string)
 
 	if when == "destroy" {
-		diags = mainRun(ctx, d, m)
+		diags = mainRun(ctx, d, m, false)
 	}
 	if !hasErrors(diags) {
 		d.SetId("")
@@ -170,7 +170,7 @@ func hasErrors(diags diag.Diagnostics) bool {
 	return false
 }
 
-func mainRun(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate bool) diag.Diagnostics {
 	config := m.(*Config)
 
 	bastionHost := d.Get("bastion_host").(string)
@@ -183,6 +183,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diag
 	timeout := d.Get("timeout").(string)
 	port := d.Get("port").(string)
 	bastionPort := d.Get("bastion_port").(string)
+	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
 	timeoutValue, err := calcTimeout(timeout)
 	if err != nil {
@@ -238,9 +239,17 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diag
 		ssh.Bastion.Key = privateKey
 	}
 
+	if onUpdate && !(d.HasChange("file") || d.HasChange("commands")) {
+		return diags
+	}
+
 	// Provision files
 	if err := copyFiles(ssh, config, createFiles); err != nil {
 		return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
+	}
+
+	if onUpdate && !commandsAfterFileChanges {
+		return diags
 	}
 
 	// Run commands
@@ -254,83 +263,12 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diag
 	return diags
 }
 
-func resourceResourceUpdate(_ context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+func resourceResourceUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	config := m.(*Config)
-
 	when := d.Get("when").(string)
-	if when != "create" {
-		return diags
-	}
 
-	bastionHost := d.Get("bastion_host").(string)
-	user := d.Get("user").(string)
-	hostUser := d.Get("host_user").(string)
-	privateKey := d.Get("private_key").(string)
-	hostPrivateKey := d.Get("host_private_key").(string)
-	host := d.Get("host").(string)
-	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
-	agent := d.Get("agent").(bool)
-	timeout := d.Get("timeout").(string)
-	port := d.Get("port").(string)
-	bastionPort := d.Get("bastion_port").(string)
-
-	timeoutValue, err := calcTimeout(timeout)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	if len(hostUser) == 0 {
-		hostUser = user
-	}
-
-	if len(hostPrivateKey) == 0 {
-		hostPrivateKey = privateKey
-	}
-
-	// Collect SSH details
-	privateIP := host
-	ssh := &easyssh.MakeConfig{
-		User:   hostUser,
-		Server: privateIP,
-		Port:   port,
-		Proxy:  http.ProxyFromEnvironment,
-		Bastion: easyssh.DefaultConfig{
-			User:   user,
-			Server: bastionHost,
-			Port:   bastionPort,
-		},
-	}
-	if hostPrivateKey != "" {
-		if agent {
-			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
-		}
-		ssh.Key = hostPrivateKey
-	}
-	if privateKey != "" {
-		ssh.Bastion.Key = privateKey
-	}
-
-	if d.HasChange("file") {
-		createFiles, diags := collectFilesToCreate(d)
-		if len(diags) > 0 {
-			return diags
-		}
-		if err := copyFiles(ssh, config, createFiles); err != nil {
-			return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
-		}
-		if commandsAfterFileChanges {
-			commands, diags := collectCommands(d)
-			if len(diags) > 0 {
-				return diags
-			}
-			// Run commands
-			stdout, errDiags, err := runCommands(commands, time.Duration(timeoutValue), ssh, m)
-			if err != nil {
-				return errDiags
-			}
-			_ = d.Set("result", stdout)
-		}
+	if when == "create" {
+		diags = mainRun(ctx, d, m, true)
 	}
 	return diags
 }
@@ -347,7 +285,7 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 	when := d.Get("when").(string)
 
 	if when == "create" {
-		diags = mainRun(ctx, d, m)
+		diags = mainRun(ctx, d, m, false)
 	}
 	if !hasErrors(diags) {
 		d.SetId(fmt.Sprintf("%d", rand.Int()))
