@@ -170,8 +170,51 @@ func hasErrors(diags diag.Diagnostics) bool {
 	return false
 }
 
+func validateResource(d *schema.ResourceData) diag.Diagnostics {
+	var diags diag.Diagnostics
+	var commands []string
+
+	timeout := d.Get("timeout").(string)
+	user := d.Get("user").(string)
+	agent := d.Get("agent").(bool)
+	privateKey := d.Get("private_key").(string)
+	hostPrivateKey := d.Get("host_private_key").(string)
+
+	if len(hostPrivateKey) == 0 {
+		hostPrivateKey = privateKey
+	}
+	_, err := calcTimeout(timeout)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	_, diags = collectFilesToCreate(d)
+	if len(diags) > 0 {
+		return diags
+	}
+	commands, diags = collectCommands(d)
+	if len(diags) > 0 {
+		return diags
+	}
+	if len(commands) > 0 {
+		if user == "" {
+			return diag.FromErr(fmt.Errorf("user must be set when 'commands' is specified"))
+		}
+		if !agent && privateKey == "" {
+			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified and 'agent' is false"))
+		}
+	}
+	if hostPrivateKey != "" && agent {
+		return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
+	}
+	return diags
+}
+
 func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate bool) diag.Diagnostics {
 	config := m.(*Config)
+
+	if diags := validateResource(d); len(diags) > 0 {
+		return diags
+	}
 
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
@@ -179,21 +222,16 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
-	agent := d.Get("agent").(bool)
 	timeout := d.Get("timeout").(string)
 	port := d.Get("port").(string)
 	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
-	timeoutValue, err := calcTimeout(timeout)
-	if err != nil {
-		return diag.FromErr(err)
-	}
+	timeoutValue, _ := calcTimeout(timeout)
 
 	if len(hostUser) == 0 {
 		hostUser = user
 	}
-
 	if len(hostPrivateKey) == 0 {
 		hostPrivateKey = privateKey
 	}
@@ -208,14 +246,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	if len(diags) > 0 {
 		return diags
 	}
-	if len(commands) > 0 {
-		if user == "" {
-			return diag.FromErr(fmt.Errorf("user must be set when 'commands' is specified"))
-		}
-		if !agent && privateKey == "" {
-			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified and 'agent' is false"))
-		}
-	}
+
 	// Collect SSH details
 	privateIP := host
 	ssh := &easyssh.MakeConfig{
@@ -230,9 +261,6 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		},
 	}
 	if hostPrivateKey != "" {
-		if agent {
-			return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
-		}
 		ssh.Key = hostPrivateKey
 	}
 	if privateKey != "" {
@@ -286,7 +314,10 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 
 	if when == "create" {
 		diags = mainRun(ctx, d, m, false)
+	} else {
+		diags = validateResource(d)
 	}
+
 	if !hasErrors(diags) {
 		d.SetId(fmt.Sprintf("%d", rand.Int()))
 	}
