@@ -47,6 +47,8 @@ The following arguments are supported:
 * `agent` - (Optional) Enforce the use of an SSH-agent. When set, will error in case a private key is provided. Default: 'false'
 * `file` - (Optional) Block specifying content to be written to the container host after creation
 * `commands` - (Required, list(string)) List of commands to execute after creation of container host
+* `pre_commands` - (Optional) Similar to `commands` but these are run before files are copied. This is useful if you need to prepare
+  the host in some way before you can copy content over e.g. create some directories
 * `bastion_host` - (Optional) The bastion host to use.  When not set, this will be deduced from the container host location
 * `bastion_port` - (Optional) The SSH port to use on the bastion host. Default: `"22"`
 * `triggers` - (Optional, list(string)) An list of strings which when changes will trigger recreation of the resource triggering

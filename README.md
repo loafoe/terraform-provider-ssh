@@ -11,7 +11,7 @@ This is a Terraform provider to copy files, run commands remotely and capture re
 
 ## Using the provider
 
-**Terraform 0.14+**: To install this provider, copy and paste this code into your Terraform configuration. Then, run terraform init.
+**Terraform 1.0+**: To install this provider, copy and paste this code into your Terraform configuration. Then, run terraform init.
 
 ```terraform
 terraform {

@@ -17,7 +17,7 @@ import (
 
 func resourceResource() *schema.Resource {
 	return &schema.Resource{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		CreateContext: resourceResourceCreate,
 		ReadContext:   resourceResourceRead,
 		UpdateContext: resourceResourceUpdate,
@@ -36,6 +36,11 @@ func resourceResource() *schema.Resource {
 				Type:    resourceResourceV0().CoreConfigSchema().ImpliedType(),
 				Upgrade: patchResourceV0,
 				Version: 0,
+			},
+			{
+				Type:    resourceResourceV1().CoreConfigSchema().ImpliedType(),
+				Upgrade: patchResourceV1,
+				Version: 1,
 			},
 		},
 		Schema: map[string]*schema.Schema{
@@ -96,12 +101,17 @@ func resourceResource() *schema.Resource {
 				Optional: true,
 				Default:  false,
 			},
+			"pre_commands": {
+				Type:     schema.TypeList,
+				MaxItems: 100,
+				Optional: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+			},
 			"commands": {
 				Type:     schema.TypeList,
 				MaxItems: 100,
 				Optional: true,
 				Elem:     &schema.Schema{Type: schema.TypeString},
-				ForceNew: true,
 			},
 			"commands_after_file_changes": {
 				Type:     schema.TypeBool,
@@ -197,7 +207,7 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	if len(diags) > 0 {
 		return diags
 	}
-	commands, diags = collectCommands(d)
+	commands, diags = collectCommands(d, "commands")
 	if len(diags) > 0 {
 		return diags
 	}
@@ -241,14 +251,18 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	if len(hostPrivateKey) == 0 {
 		hostPrivateKey = privateKey
 	}
-
+	// Pre commands
+	preCommands, diags := collectCommands(d, "pre_commands")
+	if len(diags) > 0 {
+		return diags
+	}
 	// Fetch files first before starting provisioning
 	createFiles, diags := collectFilesToCreate(d)
 	if len(diags) > 0 {
 		return diags
 	}
 	// And commands
-	commands, diags := collectCommands(d)
+	commands, diags := collectCommands(d, "commands")
 	if len(diags) > 0 {
 		return diags
 	}
@@ -277,6 +291,13 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		return diags
 	}
 
+	// Run pre commands
+	if len(preCommands) > 0 {
+		_, errDiags, err := runCommands(preCommands, time.Duration(timeoutValue), ssh, m)
+		if err != nil {
+			return errDiags
+		}
+	}
 	// Provision files
 	if err := copyFiles(ssh, config, createFiles); err != nil {
 		return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
@@ -413,9 +434,9 @@ func copyFiles(ssh *easyssh.MakeConfig, config *Config, createFiles []provisionF
 	return nil
 }
 
-func collectCommands(d *schema.ResourceData) ([]string, diag.Diagnostics) {
+func collectCommands(d *schema.ResourceData, field string) ([]string, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	list := d.Get("commands").([]interface{})
+	list := d.Get(field).([]interface{})
 	commands := make([]string, 0)
 	for i := 0; i < len(list); i++ {
 		commands = append(commands, list[i].(string))
