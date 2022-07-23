@@ -22,6 +22,12 @@ func resourceResource() *schema.Resource {
 		ReadContext:   resourceResourceRead,
 		UpdateContext: resourceResourceUpdate,
 		DeleteContext: resourceResourceDelete,
+		CustomizeDiff: func(ctx context.Context, d *schema.ResourceDiff, m interface{}) error {
+			if d.HasChange("file") || d.HasChange("commands") {
+				_ = d.SetNewComputed("result")
+			}
+			return nil
+		},
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
