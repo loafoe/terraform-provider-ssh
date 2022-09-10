@@ -24,7 +24,8 @@ func Provider() *schema.Provider {
 			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"ssh_resource": resourceResource(),
+			"ssh_resource":           resourceResource(),
+			"ssh_sensitive_resource": sensitiveResourceResource(),
 		},
 		DataSourcesMap:       map[string]*schema.Resource{},
 		ConfigureContextFunc: providerConfigure,
