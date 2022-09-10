@@ -1,4 +1,4 @@
-# ssh provider
+# SSH provider
 
 Provides a resource which allows you to copy, run commands and capture output
 via SSH. It supports Bastion host connection and HTTP proxies,
