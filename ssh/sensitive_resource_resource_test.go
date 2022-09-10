@@ -50,7 +50,7 @@ resource "ssh_sensitive_resource" "test" {
     ]
 }
 
-resource "ssh_resource" "destroy" {
+resource "ssh_sensitive_resource" "destroy" {
 	host        = "%s"
     user        = "%s"
     agent       = false
