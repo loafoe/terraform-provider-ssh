@@ -215,7 +215,7 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	hostPrivateKey := d.Get("host_private_key").(string)
 	retryDelay := d.Get("retry_delay").(string)
 
-	timeoutValue, err := calcTimeout(timeout, 60)
+	timeoutValue, err := calcTimeout(timeout, 20)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("timeout value: %w", err))
 	}
@@ -271,7 +271,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
-	timeoutValue, _ := calcTimeout(timeout, 60)
+	timeoutValue, _ := calcTimeout(timeout, 20)
 	retryDelayValue, _ := calcTimeout(retryDelay, 1)
 
 	if len(hostUser) == 0 {
@@ -393,7 +393,7 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 	for i := 0; i < len(commands); i++ {
 		for {
 			stdout, stderr, done, err = ssh.Run(commands[i], timeout*time.Second)
-			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
+			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\nerror: %v\n", commands[i], done, stdout, stderr, err)
 			if err == nil {
 				break
 			}
@@ -404,7 +404,7 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 				_, _ = config.Debug("error: %v\n", err)
 				diags = append(diags, diag.Diagnostic{
 					Severity: diag.Error,
-					Summary:  fmt.Sprintf("execution of command '%s' failed. stdout output", commands[i]),
+					Summary:  fmt.Sprintf("execution of command '%s' failed: %s: %s", commands[i], ctx.Err(), err),
 					Detail:   stdout,
 				})
 				if stderr != "" {
