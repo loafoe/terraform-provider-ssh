@@ -1,4 +1,4 @@
-# ssh Terraform provider
+# SSH Terraform provider
 
 - Documentation: https://registry.terraform.io/providers/loafoe/ssh/latest/docs
 
