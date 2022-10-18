@@ -213,13 +213,22 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	agent := d.Get("agent").(bool)
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
+	retryDelay := d.Get("retry_delay").(string)
+
+	timeoutValue, err := calcTimeout(timeout, 60)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("timeout value: %w", err))
+	}
+	retryDelayValue, err := calcTimeout(retryDelay, 1)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("retry_delay value: %w", err))
+	}
+	if retryDelayValue >= timeoutValue {
+		return diag.FromErr(fmt.Errorf("retry_delay cannot be greater than timeout (%d >= %d)", retryDelayValue, timeoutValue))
+	}
 
 	if len(hostPrivateKey) == 0 {
 		hostPrivateKey = privateKey
-	}
-	_, err := calcTimeout(timeout, 60)
-	if err != nil {
-		return diag.FromErr(err)
 	}
 	_, diags = collectFilesToCreate(d)
 	if len(diags) > 0 {
@@ -263,11 +272,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
 	timeoutValue, _ := calcTimeout(timeout, 60)
-	retryDelayValue, _ := calcTimeout(retryDelay, 5)
-
-	if retryDelayValue >= timeoutValue {
-		return diag.FromErr(fmt.Errorf("retry_delay cannot be greater than timeout (%d >= %d)", retryDelayValue, timeoutValue))
-	}
+	retryDelayValue, _ := calcTimeout(retryDelay, 1)
 
 	if len(hostUser) == 0 {
 		hostUser = user
