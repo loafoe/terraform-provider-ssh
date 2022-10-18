@@ -17,7 +17,7 @@ import (
 
 func resourceResource() *schema.Resource {
 	return &schema.Resource{
-		SchemaVersion: 2,
+		SchemaVersion: 3,
 		CreateContext: resourceResourceCreate,
 		ReadContext:   resourceResourceRead,
 		UpdateContext: resourceResourceUpdate,
@@ -36,6 +36,11 @@ func resourceResource() *schema.Resource {
 				Type:    resourceResourceV1().CoreConfigSchema().ImpliedType(),
 				Upgrade: patchResourceV1,
 				Version: 1,
+			},
+			{
+				Type:    resourceResourceV2().CoreConfigSchema().ImpliedType(),
+				Upgrade: patchResourceV2,
+				Version: 2,
 			},
 		},
 		Schema: sshResourceSchema(false),
@@ -130,6 +135,11 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Optional: true,
 			Default:  "5m",
 		},
+		"retry_delay": {
+			Type:     schema.TypeString,
+			Optional: true,
+			Default:  "10s",
+		},
 		"result": {
 			Type:      schema.TypeString,
 			Computed:  true,
@@ -207,7 +217,7 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	if len(hostPrivateKey) == 0 {
 		hostPrivateKey = privateKey
 	}
-	_, err := calcTimeout(timeout)
+	_, err := calcTimeout(timeout, 60)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -247,11 +257,17 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
 	timeout := d.Get("timeout").(string)
+	retryDelay := d.Get("retry_delay").(string)
 	port := d.Get("port").(string)
 	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
-	timeoutValue, _ := calcTimeout(timeout)
+	timeoutValue, _ := calcTimeout(timeout, 60)
+	retryDelayValue, _ := calcTimeout(retryDelay, 5)
+
+	if retryDelayValue >= timeoutValue {
+		return diag.FromErr(fmt.Errorf("retry_delay cannot be greater than timeout (%d >= %d)", retryDelayValue, timeoutValue))
+	}
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -299,16 +315,19 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		return diags
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutValue*time.Second)
+	defer cancel()
+
 	// Run pre commands
 	if len(preCommands) > 0 {
-		_, errDiags, err := runCommands(preCommands, time.Duration(timeoutValue), ssh, m)
+		_, errDiags, err := runCommands(ctx, retryDelayValue, preCommands, timeoutValue, ssh, m)
 		if err != nil {
 			return errDiags
 		}
 	}
 	// Provision files
-	if err := copyFiles(ssh, config, createFiles); err != nil {
-		return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
+	if err := copyFiles(ctx, retryDelayValue, ssh, config, createFiles); err != nil {
+		return diag.FromErr(fmt.Errorf("copying files to remote: %w", ctx.Err()))
 	}
 
 	if onUpdate && !commandsAfterFileChanges {
@@ -316,7 +335,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	}
 
 	// Run commands
-	stdout, errDiags, err := runCommands(commands, time.Duration(timeoutValue), ssh, m)
+	stdout, errDiags, err := runCommands(ctx, retryDelayValue, commands, timeoutValue, ssh, m)
 	if err != nil {
 		return errDiags
 	}
@@ -359,7 +378,7 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 	return diags
 }
 
-func runCommands(commands []string, timeout time.Duration, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
+func runCommands(ctx context.Context, retryDelay time.Duration, commands []string, timeout time.Duration, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
 	var diags diag.Diagnostics
 	var stdout, stderr string
 	var done bool
@@ -367,75 +386,98 @@ func runCommands(commands []string, timeout time.Duration, ssh *easyssh.MakeConf
 	config := m.(*Config)
 
 	for i := 0; i < len(commands); i++ {
-		stdout, stderr, done, err = ssh.Run(commands[i], timeout*time.Second)
-		_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
-		if err != nil {
-			_, _ = config.Debug("error: %v\n", err)
-			diags = append(diags, diag.Diagnostic{
-				Severity: diag.Error,
-				Summary:  fmt.Sprintf("execution of command '%s' failed. stdout output", commands[i]),
-				Detail:   stdout,
-			})
-			if stderr != "" {
+		for {
+			stdout, stderr, done, err = ssh.Run(commands[i], timeout*time.Second)
+			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\n", commands[i], done, stdout, stderr)
+			if err == nil {
+				break
+			}
+			select {
+			case <-time.After(retryDelay * time.Second):
+				// Retry
+			case <-ctx.Done():
+				_, _ = config.Debug("error: %v\n", err)
 				diags = append(diags, diag.Diagnostic{
 					Severity: diag.Error,
-					Summary:  "stderr output",
-					Detail:   stderr,
+					Summary:  fmt.Sprintf("execution of command '%s' failed. stdout output", commands[i]),
+					Detail:   stdout,
 				})
+				if stderr != "" {
+					diags = append(diags, diag.Diagnostic{
+						Severity: diag.Error,
+						Summary:  "stderr output",
+						Detail:   stderr,
+					})
+				}
+				return stdout, diags, err
 			}
-			return stdout, diags, err
 		}
 	}
 	return stdout, diags, nil
 }
 
-func copyFiles(ssh *easyssh.MakeConfig, config *Config, createFiles []provisionFile) error {
+func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeConfig, config *Config, createFiles []provisionFile) error {
 	for _, f := range createFiles {
-		if f.Source != "" {
-			src, srcErr := os.Open(f.Source)
-			if srcErr != nil {
-				_, _ = config.Debug("Failed to open source file %s: %v\n", f.Source, srcErr)
-				return srcErr
-			}
-			srcStat, statErr := src.Stat()
-			if statErr != nil {
-				_, _ = config.Debug("Failed to stat source file %s: %v\n", f.Source, statErr)
+		copyFile := func(f provisionFile) error {
+			if f.Source != "" {
+				src, srcErr := os.Open(f.Source)
+				if srcErr != nil {
+					_, _ = config.Debug("Failed to open source file %s: %v\n", f.Source, srcErr)
+					return srcErr
+				}
+				srcStat, statErr := src.Stat()
+				if statErr != nil {
+					_, _ = config.Debug("Failed to stat source file %s: %v\n", f.Source, statErr)
+					_ = src.Close()
+					return statErr
+				}
+				_ = ssh.WriteFile(src, srcStat.Size(), f.Destination)
+				_, _ = config.Debug("Copied %s to remote file %s:%s: %d bytes\n", f.Source, ssh.Server, f.Destination, srcStat.Size())
 				_ = src.Close()
-				return statErr
+			} else {
+				buffer := bytes.NewBufferString(f.Content)
+				if err := ssh.WriteFile(buffer, int64(buffer.Len()), f.Destination); err != nil {
+					_, _ = config.Debug("Failed to copy content to remote file %s:%s:%s: %v\n", ssh.Server, ssh.Port, f.Destination, err)
+					return err
+				}
+				_, _ = config.Debug("Created remote file %s:%s:%s: %d bytes\n", ssh.Server, ssh.Port, f.Destination, len(f.Content))
 			}
-			_ = ssh.WriteFile(src, srcStat.Size(), f.Destination)
-			_, _ = config.Debug("Copied %s to remote file %s:%s: %d bytes\n", f.Source, ssh.Server, f.Destination, srcStat.Size())
-			_ = src.Close()
-		} else {
-			buffer := bytes.NewBufferString(f.Content)
-			if err := ssh.WriteFile(buffer, int64(buffer.Len()), f.Destination); err != nil {
-				_, _ = config.Debug("Failed to copy content to remote file %s:%s:%s: %v\n", ssh.Server, ssh.Port, f.Destination, err)
-				return err
+			// Permissions change
+			if f.Permissions != "" {
+				outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chmod %s \"%s\"", f.Permissions, f.Destination))
+				_, _ = config.Debug("Permissions file %s:%s: %v %v\n", f.Destination, f.Permissions, outStr, errStr)
+				if err != nil {
+					return err
+				}
 			}
-			_, _ = config.Debug("Created remote file %s:%s:%s: %d bytes\n", ssh.Server, ssh.Port, f.Destination, len(f.Content))
+			// Owner
+			if f.Owner != "" {
+				outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chown %s \"%s\"", f.Owner, f.Destination))
+				_, _ = config.Debug("Owner file %s:%s: %v %v\n", f.Destination, f.Owner, outStr, errStr)
+				if err != nil {
+					return err
+				}
+			}
+			// Group
+			if f.Group != "" {
+				outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chgrp %s \"%s\"", f.Group, f.Destination))
+				_, _ = config.Debug("Group file %s:%s: %v %v\n", f.Destination, f.Group, outStr, errStr)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
 		}
-		// Permissions change
-		if f.Permissions != "" {
-			outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chmod %s \"%s\"", f.Permissions, f.Destination))
-			_, _ = config.Debug("Permissions file %s:%s: %v %v\n", f.Destination, f.Permissions, outStr, errStr)
-			if err != nil {
-				return err
+		for {
+			err := copyFile(f)
+			if err == nil {
+				break
 			}
-		}
-		// Owner
-		if f.Owner != "" {
-			outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chown %s \"%s\"", f.Owner, f.Destination))
-			_, _ = config.Debug("Owner file %s:%s: %v %v\n", f.Destination, f.Owner, outStr, errStr)
-			if err != nil {
-				return err
-			}
-		}
-		// Group
-		if f.Group != "" {
-			outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chgrp %s \"%s\"", f.Group, f.Destination))
-			_, _ = config.Debug("Group file %s:%s: %v %v\n", f.Destination, f.Group, outStr, errStr)
-			if err != nil {
-				return err
+			select {
+			case <-time.After(retryDelay * time.Second):
+			// Retry
+			case <-ctx.Done():
+				return fmt.Errorf("%s: %w", ctx.Err(), err)
 			}
 		}
 	}
@@ -521,7 +563,7 @@ func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnos
 	return files, diags
 }
 
-func calcTimeout(timeout string) (int, error) {
+func calcTimeout(timeout string, min int) (time.Duration, error) {
 	var unit string
 	var value int
 	scanned, err := fmt.Sscanf(timeout, "%d%s", &value, &unit)
@@ -544,8 +586,8 @@ func calcTimeout(timeout string) (int, error) {
 	default:
 		return 0, fmt.Errorf("unit '%s' not supported", unit)
 	}
-	if seconds < 60 {
-		return 0, fmt.Errorf("a value less than 60 seconds is not supported")
+	if seconds < min {
+		return 0, fmt.Errorf("a value less than %d seconds is not supported", min)
 	}
-	return seconds, nil
+	return time.Duration(seconds), nil
 }

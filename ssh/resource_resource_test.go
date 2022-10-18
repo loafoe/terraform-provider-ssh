@@ -45,8 +45,12 @@ resource "ssh_resource" "test" {
     agent       = false
     private_key = "%s"
 
+	timeout = "5m"
+
+	retry_delay = "2s"
+
     commands = [
-       "date > /tmp/%s"
+       "date > /tmp/terraform-provider-ssh-test-%s"
     ]
 }
 
@@ -59,7 +63,7 @@ resource "ssh_resource" "destroy" {
     when        = "destroy"
 
     commands = [
-        "rm /tmp/%s"
+        "rm /tmp/terraform-provider-ssh-test-%s"
     ]
 }
 `,
