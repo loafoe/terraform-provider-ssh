@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## v2.3.0
+
+- Retry SSH operations on error (#31)
+- Bump SDK
+
 ## v2.2.0
 
 - Add `ssh_sensitive_resource` (#45)

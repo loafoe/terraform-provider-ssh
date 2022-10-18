@@ -11,6 +11,7 @@ func sensitiveResourceResource() *schema.Resource {
 		UpdateContext: resourceResourceUpdate,
 		DeleteContext: resourceResourceDelete,
 		CustomizeDiff: customDiff,
+		SchemaVersion: 1,
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},

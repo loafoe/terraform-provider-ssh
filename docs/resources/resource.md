@@ -18,6 +18,10 @@ resource "ssh_resource" "init" {
   agent        = true
   # An ssh-agent with your SSH private keys should be running
   # Use 'private_key' to set the SSH key otherwise
+
+  # Try to complete in at most 15 minutes and wait 5 seconds between retries
+  timeout     = "15m"
+  retry_delay = "5s"
   
   file {
     content     = "echo Hello world"
@@ -25,10 +29,26 @@ resource "ssh_resource" "init" {
     permissions = "0700"
   }
   
-  timeout = "15m"
-  
   commands = [
     "/tmp/hello.sh"
+  ]
+}
+```
+
+This next example will force the command to run on each `terraform apply` using the triggers feature:
+
+```hcl
+resource "ssh_resource" "always_run" {
+  triggers = {
+    always_run = "${timestamp()}"
+  }
+
+  host         = "some.private-instance.io"
+  user         = var.user
+  agent        = true
+  
+  command = [
+     "touch /tmp/terraform_triggered"
   ]
 }
 ```
@@ -54,7 +74,8 @@ The following arguments are supported:
 * `triggers` - (Optional, list(string)) An list of strings which when changes will trigger recreation of the resource triggering
   all create files and commands executions.
 * `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
-* `timeout` - (Optional) Time to wait before considering a command to have timed out. Default is `5m`. Accept seconds (e.g. `180s`) or minutes (e.g. `30m`)
+* `timeout` - (Optional) Time to wait before considering provisioning as unsuccessful. This spans the copy and command phase. Default is `5m`. Accept seconds (e.g. `300s`) or minutes (e.g. `30m`)
+* `retry_delay` - (Optional) Time to wait before retrying an SSH operation (copy or command execution). Default is `10s`.
 
 Each `file` block can contain the following fields. Use either `content` or `source`:
 
