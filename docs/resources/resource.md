@@ -35,6 +35,24 @@ resource "ssh_resource" "init" {
 }
 ```
 
+This next example will force the command to run on each `terraform apply` using the triggers feature:
+
+```hcl
+resource "ssh_resource" "always_run" {
+  triggers = {
+    always_run = "${timestamp()}"
+  }
+
+  host         = "some.private-instance.io"
+  user         = var.user
+  agent        = true
+  
+  command = [
+     "touch /tmp/terraform_triggered"
+  ]
+}
+```
+
 ## Argument Reference
 
 The following arguments are supported:
