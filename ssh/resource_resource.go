@@ -100,7 +100,7 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 		},
 		"password": {
 			Type:     schema.TypeString,
-			Optional: true
+			Optional: true,
 		},
 		"private_key": {
 			Type:      schema.TypeString,
