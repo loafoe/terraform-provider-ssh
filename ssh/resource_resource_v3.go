@@ -11,12 +11,13 @@ func patchResourceV3(_ context.Context, rawState map[string]interface{}, _ inter
 	if rawState == nil {
 		rawState = map[string]interface{}{}
 	}
+	rawState["retry_limit"] = 5
 	return rawState, nil
 }
 
 func resourceResourceV3() *schema.Resource {
 	return &schema.Resource{
-		SchemaVersion: 2,
+		SchemaVersion: 3,
 		Schema: map[string]*schema.Schema{
 			"when": {
 				Description:  "Determines when the commands is to be executed. Options are 'create' or 'destroy'",
