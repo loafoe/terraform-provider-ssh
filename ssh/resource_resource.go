@@ -219,11 +219,11 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	hostPrivateKey := d.Get("host_private_key").(string)
 	retryDelay := d.Get("retry_delay").(string)
 
-	timeoutValue, err := calcTimeout(timeout, 20)
+	timeoutValue, err := time.ParseDuration(timeout)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("timeout value: %w", err))
 	}
-	retryDelayValue, err := calcTimeout(retryDelay, 1)
+	retryDelayValue, err := time.ParseDuration(retryDelay)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("retry_delay value: %w", err))
 	}
@@ -276,8 +276,8 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
-	timeoutValue, _ := calcTimeout(timeout, 20)
-	retryDelayValue, _ := calcTimeout(retryDelay, 1)
+	timeoutValue, _ := time.ParseDuration(timeout)
+	retryDelayValue, _ := time.ParseDuration(retryDelay)
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -574,33 +574,4 @@ func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnos
 		}
 	}
 	return files, diags
-}
-
-func calcTimeout(timeout string, min int) (time.Duration, error) {
-	var unit string
-	var value int
-	scanned, err := fmt.Sscanf(timeout, "%d%s", &value, &unit)
-	if err != nil {
-		return 0, fmt.Errorf("calcTimeout scan [%s]: %w", timeout, err)
-	}
-	if scanned != 2 {
-		return 0, fmt.Errorf("invalid timeout format: %s", timeout)
-	}
-	seconds := 0
-	switch unit {
-	case "s":
-		seconds = value
-	case "m":
-		seconds = 60 * value
-	case "h":
-		seconds = 3600 * value
-	case "d":
-		seconds = 86400 * value
-	default:
-		return 0, fmt.Errorf("unit '%s' not supported", unit)
-	}
-	if seconds < min {
-		return 0, fmt.Errorf("a value less than %d seconds is not supported", min)
-	}
-	return time.Duration(seconds), nil
 }
