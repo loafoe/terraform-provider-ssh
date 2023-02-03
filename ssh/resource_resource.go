@@ -98,6 +98,10 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Optional: true,
 			ForceNew: true,
 		},
+		"password": {
+			Type:     schema.TypeString,
+			Optional: true,
+		},
 		"private_key": {
 			Type:      schema.TypeString,
 			Optional:  true,
@@ -262,6 +266,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
 	hostUser := d.Get("host_user").(string)
+	password := d.Get("password").(string)
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	host := d.Get("host").(string)
@@ -308,6 +313,9 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 			Server: bastionHost,
 			Port:   bastionPort,
 		},
+	}
+	if password != ""{
+		ssh.Password = password
 	}
 	if hostPrivateKey != "" {
 		ssh.Key = hostPrivateKey
