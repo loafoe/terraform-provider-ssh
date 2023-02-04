@@ -59,10 +59,11 @@ The following arguments are supported:
 
 * `host` - (Required) The IP address or DNS hostname of the target server
 * `user` - (Required) The username to use for provision activities using SSH
+* `password` - (Optional) The SSH password to use for the host
 * `when` - (Optional) Determines when the file blocks and commands are executed. Options are `create` or `destroy`. Default: `"create"`
-* `host_user` - (Optional) A distinct username to use for provision activities when provided. When missing the provided `user` is used
+* `bastion_user` - (Optional) A distinct username to use for bastion user. When missing the provided `user` is used
 * `private_key` - (Optional) The SSH private key to use for provision activities. Recommend to use ssh-agent
-* `host_private_key` - (Optional) A distinct SSH private key to use for provision activities when provided. Recommend to use ssh-agent
+* `bastion_private_key` - (Optional) A distinct SSH private key to use for the bastion host. Recommend to use ssh-agent
 * `port` - (Optional) The SSH port to use on the target server. Default: `"22"`
 * `agent` - (Optional) Enforce the use of an SSH-agent. When set, will error in case a private key is provided. Default: 'false'
 * `file` - (Optional) Block specifying content to be written to the container host after creation
@@ -71,6 +72,7 @@ The following arguments are supported:
   the host in some way before you can copy content over e.g. create some directories
 * `bastion_host` - (Optional) The bastion host to use.  When not set, this will be deduced from the container host location
 * `bastion_port` - (Optional) The SSH port to use on the bastion host. Default: `"22"`
+* `bastion_password` - (Optional) The SSH password to use for the bastion host
 * `triggers` - (Optional, list(string)) An list of strings which when changes will trigger recreation of the resource triggering
   all create files and commands executions.
 * `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
