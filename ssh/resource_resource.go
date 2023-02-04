@@ -17,7 +17,7 @@ import (
 
 func resourceResource() *schema.Resource {
 	return &schema.Resource{
-		SchemaVersion: 3,
+		SchemaVersion: 4,
 		CreateContext: resourceResourceCreate,
 		ReadContext:   resourceResourceRead,
 		UpdateContext: resourceResourceUpdate,
@@ -41,6 +41,11 @@ func resourceResource() *schema.Resource {
 				Type:    resourceResourceV2().CoreConfigSchema().ImpliedType(),
 				Upgrade: patchResourceV2,
 				Version: 2,
+			},
+			{
+				Type:    resourceResourceV3().CoreConfigSchema().ImpliedType(),
+				Upgrade: patchResourceV3,
+				Version: 3,
 			},
 		},
 		Schema: sshResourceSchema(false),
@@ -94,13 +99,25 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			ForceNew: true,
 		},
 		"host_user": {
+			Type:       schema.TypeString,
+			Optional:   true,
+			ForceNew:   true,
+			Deprecated: "Use 'user' and 'bastion_user'",
+		},
+		"bastion_user": {
 			Type:     schema.TypeString,
 			Optional: true,
 			ForceNew: true,
 		},
 		"password": {
-			Type:     schema.TypeString,
-			Optional: true,
+			Type:      schema.TypeString,
+			Optional:  true,
+			Sensitive: true,
+		},
+		"bastion_password": {
+			Type:      schema.TypeString,
+			Optional:  true,
+			Sensitive: true,
 		},
 		"private_key": {
 			Type:      schema.TypeString,
@@ -108,6 +125,12 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Sensitive: true,
 		},
 		"host_private_key": {
+			Type:       schema.TypeString,
+			Optional:   true,
+			Sensitive:  true,
+			Deprecated: "Use 'private_key' and 'bastion_private_key'",
+		},
+		"bastion_private_key": {
 			Type:      schema.TypeString,
 			Optional:  true,
 			Sensitive: true,
@@ -218,6 +241,7 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	retryDelay := d.Get("retry_delay").(string)
+	password := d.Get("password").(string)
 
 	timeoutValue, err := time.ParseDuration(timeout)
 	if err != nil {
@@ -246,12 +270,12 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 		if user == "" {
 			return diag.FromErr(fmt.Errorf("user must be set when 'commands' is specified"))
 		}
-		if !agent && privateKey == "" {
-			return diag.FromErr(fmt.Errorf("privateKey must be set when 'commands' is specified and 'agent' is false"))
+		if !agent && privateKey == "" && password == "" {
+			return diag.FromErr(fmt.Errorf("'privateKey' must be set when 'commands' is specified and 'agent' is false and no 'password' is given"))
 		}
 	}
-	if hostPrivateKey != "" && agent {
-		return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a private key"))
+	if agent && (hostPrivateKey != "" || privateKey != "" || password != "") {
+		return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a password or private key"))
 	}
 	return diags
 }
@@ -266,9 +290,12 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	bastionHost := d.Get("bastion_host").(string)
 	user := d.Get("user").(string)
 	hostUser := d.Get("host_user").(string)
+	bastionUser := d.Get("bastion_user").(string)
 	password := d.Get("password").(string)
+	bastionPassword := d.Get("bastion_password").(string)
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
+	bastionPrivateKey := d.Get("bastion_private_key").(string)
 	host := d.Get("host").(string)
 	timeout := d.Get("timeout").(string)
 	retryDelay := d.Get("retry_delay").(string)
@@ -307,6 +334,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		User:   hostUser,
 		Server: privateIP,
 		Port:   port,
+		Key:    privateKey,
 		Proxy:  http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:   user,
@@ -314,14 +342,23 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 			Port:   bastionPort,
 		},
 	}
-	if password != ""{
+	if password != "" {
 		ssh.Password = password
+	}
+	if bastionPassword != "" {
+		ssh.Bastion.Password = bastionPassword
+	}
+	if bastionUser != "" {
+		ssh.Bastion.User = bastionUser
 	}
 	if hostPrivateKey != "" {
 		ssh.Key = hostPrivateKey
 	}
 	if privateKey != "" {
 		ssh.Bastion.Key = privateKey
+	}
+	if bastionPrivateKey != "" {
+		ssh.Bastion.Key = bastionPrivateKey
 	}
 
 	if onUpdate && !(d.HasChange("file") || d.HasChange("commands")) {
