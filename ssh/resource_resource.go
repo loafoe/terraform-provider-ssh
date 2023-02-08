@@ -167,6 +167,11 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Optional: true,
 			Default:  "10s",
 		},
+		"retry_limit": {
+			Type:     schema.TypeInt,
+			Optional: true,
+			Default:  5,
+		},
 		"result": {
 			Type:      schema.TypeString,
 			Computed:  true,
@@ -241,6 +246,7 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	privateKey := d.Get("private_key").(string)
 	hostPrivateKey := d.Get("host_private_key").(string)
 	retryDelay := d.Get("retry_delay").(string)
+	retryLimit := d.Get("retry_limit").(int)
 	password := d.Get("password").(string)
 
 	timeoutValue, err := time.ParseDuration(timeout)
@@ -253,6 +259,9 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	}
 	if retryDelayValue >= timeoutValue {
 		return diag.FromErr(fmt.Errorf("retry_delay cannot be greater than timeout (%d >= %d)", retryDelayValue, timeoutValue))
+	}
+	if retryLimit < 0 {
+		return diag.FromErr(fmt.Errorf("retry_limit (%d) cannot be less than zero", retryLimit))
 	}
 
 	if len(hostPrivateKey) == 0 {
@@ -299,6 +308,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	host := d.Get("host").(string)
 	timeout := d.Get("timeout").(string)
 	retryDelay := d.Get("retry_delay").(string)
+	retryLimit := d.Get("retry_limit").(int)
 	port := d.Get("port").(string)
 	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
@@ -370,13 +380,13 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 
 	// Run pre commands
 	if len(preCommands) > 0 {
-		_, errDiags, err := runCommands(ctx, retryDelayValue, preCommands, timeoutValue, ssh, m)
+		_, errDiags, err := runCommands(ctx, retryDelayValue, retryLimit, preCommands, timeoutValue, ssh, m)
 		if err != nil {
 			return errDiags
 		}
 	}
 	// Provision files
-	if err := copyFiles(ctx, retryDelayValue, ssh, config, createFiles); err != nil {
+	if err := copyFiles(ctx, retryDelayValue, retryLimit, ssh, config, createFiles); err != nil {
 		return diag.FromErr(fmt.Errorf("copying files to remote: %w", ctx.Err()))
 	}
 
@@ -385,7 +395,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	}
 
 	// Run commands
-	stdout, errDiags, err := runCommands(ctx, retryDelayValue, commands, timeoutValue, ssh, m)
+	stdout, errDiags, err := runCommands(ctx, retryDelayValue, retryLimit, commands, timeoutValue, ssh, m)
 	if err != nil {
 		return errDiags
 	}
@@ -428,7 +438,18 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 	return diags
 }
 
-func runCommands(ctx context.Context, retryDelay time.Duration, commands []string, timeout time.Duration, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
+func stopRetry(retryCount int, retryLimit int) <-chan bool {
+	c := make(chan bool)
+	if retryCount >= retryLimit {
+		go func() {
+			c <- true
+			close(c)
+		}()
+	}
+	return c
+}
+
+func runCommands(ctx context.Context, retryDelay time.Duration, retryLimit int, commands []string, timeout time.Duration, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
 	var diags diag.Diagnostics
 	var stdout, stderr string
 	var done bool
@@ -436,7 +457,7 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 	config := m.(*Config)
 
 	for i := 0; i < len(commands); i++ {
-		for {
+		for r := 0; ; r++ {
 			stdout, stderr, done, err = ssh.Run(commands[i], timeout*time.Second)
 			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\nerror: %v\n", commands[i], done, stdout, stderr, err)
 			if err == nil {
@@ -444,29 +465,34 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 			}
 			select {
 			case <-time.After(retryDelay * time.Second):
-				// Retry
+				goto retry
 			case <-ctx.Done():
-				_, _ = config.Debug("error: %v\n", err)
+				goto done
+			case <-stopRetry(r, retryLimit):
+				goto done
+			}
+		done:
+			_, _ = config.Debug("error: %v\n", err)
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  fmt.Sprintf("execution of command '%s' failed: %s: %s", commands[i], ctx.Err(), err),
+				Detail:   stdout,
+			})
+			if stderr != "" {
 				diags = append(diags, diag.Diagnostic{
 					Severity: diag.Error,
-					Summary:  fmt.Sprintf("execution of command '%s' failed: %s: %s", commands[i], ctx.Err(), err),
-					Detail:   stdout,
+					Summary:  "stderr output",
+					Detail:   stderr,
 				})
-				if stderr != "" {
-					diags = append(diags, diag.Diagnostic{
-						Severity: diag.Error,
-						Summary:  "stderr output",
-						Detail:   stderr,
-					})
-				}
-				return stdout, diags, err
 			}
+			return stdout, diags, err
+		retry:
 		}
 	}
 	return stdout, diags, nil
 }
 
-func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeConfig, config *Config, createFiles []provisionFile) error {
+func copyFiles(ctx context.Context, retryDelay time.Duration, retryLimit int, ssh *easyssh.MakeConfig, config *Config, createFiles []provisionFile) error {
 	for _, f := range createFiles {
 		copyFile := func(f provisionFile) error {
 			if f.Source != "" {
@@ -518,17 +544,22 @@ func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeC
 			}
 			return nil
 		}
-		for {
+		for r := 0; ; r++ {
 			err := copyFile(f)
 			if err == nil {
 				break
 			}
 			select {
 			case <-time.After(retryDelay * time.Second):
-			// Retry
+				goto retry
 			case <-ctx.Done():
-				return fmt.Errorf("%s: %w", ctx.Err(), err)
+				goto done
+			case <-stopRetry(r, retryLimit):
+				goto done
 			}
+		done:
+			return fmt.Errorf("%s: %w", ctx.Err(), err)
+		retry:
 		}
 	}
 	return nil
