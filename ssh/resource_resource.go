@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -294,8 +295,10 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	password := d.Get("password").(string)
 	bastionPassword := d.Get("bastion_password").(string)
 	privateKey := d.Get("private_key").(string)
+	privateKeyPassphrase, _ := schema.EnvDefaultFunc("SSH_PRIVATE_KEY_PASSPHRASE", "")()
 	hostPrivateKey := d.Get("host_private_key").(string)
 	bastionPrivateKey := d.Get("bastion_private_key").(string)
+	bastionPrivateKeyPassphrase, _ := schema.EnvDefaultFunc("SSH_BASTION_PRIVATE_KEY_PASSPHRASE", "")()
 	host := d.Get("host").(string)
 	timeout := d.Get("timeout").(string)
 	retryDelay := d.Get("retry_delay").(string)
@@ -331,15 +334,17 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	// Collect SSH details
 	privateIP := host
 	ssh := &easyssh.MakeConfig{
-		User:   hostUser,
-		Server: privateIP,
-		Port:   port,
-		Key:    privateKey,
-		Proxy:  http.ProxyFromEnvironment,
+		User:       hostUser,
+		Server:     privateIP,
+		Port:       port,
+		Key:        privateKey,
+		Passphrase: privateKeyPassphrase.(string),
+		Proxy:      http.ProxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
-			User:   user,
-			Server: bastionHost,
-			Port:   bastionPort,
+			User:       user,
+			Server:     bastionHost,
+			Passphrase: bastionPrivateKeyPassphrase.(string),
+			Port:       bastionPort,
 		},
 	}
 	if password != "" {
@@ -442,9 +447,15 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 			if err == nil {
 				break
 			}
+			if strings.Contains(err.Error(), "no supported methods remain") {
+				diags = append(diags, diag.FromErr(err)...)
+				return stdout, diags, err
+			}
+
 			select {
 			case <-time.After(retryDelay * time.Second):
 				// Retry
+
 			case <-ctx.Done():
 				_, _ = config.Debug("error: %v\n", err)
 				diags = append(diags, diag.Diagnostic{

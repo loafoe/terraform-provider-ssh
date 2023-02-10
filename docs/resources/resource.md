@@ -88,6 +88,16 @@ Each `file` block can contain the following fields. Use either `content` or `sou
 * `owner` - (Optional, string) The file owner. Default owner the SSH user
 * `group` - (Optional, string) The file group. Default group is the SSH user's group
 
+### Passphrases on SSH private keys
+
+The provider supports using private keys with a passphrases. However, to prevent passphrases from being stored
+in Terraform state they can only be provided through the environment variables:
+
+| Environment                        | Description                                |
+|------------------------------------|--------------------------------------------|
+| SSH_PRIVATE_KEY_PASSPHRASE         | Passphrase for the host target private key |
+| SSH_BASTION_PRIVATE_KEY_PASSPHRASE | Passphrase for the bastion private key     |
+
 ## Attributes Reference
 
 The following attributes are exported:
