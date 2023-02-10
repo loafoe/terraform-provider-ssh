@@ -370,7 +370,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		return diags
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutValue*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutValue)
 	defer cancel()
 
 	// Run pre commands
@@ -442,7 +442,7 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 
 	for i := 0; i < len(commands); i++ {
 		for {
-			stdout, stderr, done, err = ssh.Run(commands[i], timeout*time.Second)
+			stdout, stderr, done, err = ssh.Run(commands[i], timeout)
 			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\nerror: %v\n", commands[i], done, stdout, stderr, err)
 			if err == nil {
 				break
@@ -453,7 +453,7 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 			}
 
 			select {
-			case <-time.After(retryDelay * time.Second):
+			case <-time.After(retryDelay):
 				// Retry
 
 			case <-ctx.Done():
@@ -535,7 +535,7 @@ func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeC
 				break
 			}
 			select {
-			case <-time.After(retryDelay * time.Second):
+			case <-time.After(retryDelay):
 			// Retry
 			case <-ctx.Done():
 				return fmt.Errorf("%s: %w", ctx.Err(), err)
