@@ -47,7 +47,7 @@ resource "ssh_resource" "always_run" {
   user         = var.user
   agent        = true
   
-  command = [
+  commands = [
      "touch /tmp/terraform_triggered"
   ]
 }
