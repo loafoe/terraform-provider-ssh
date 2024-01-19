@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -446,10 +445,6 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\nerror: %v\n", commands[i], done, stdout, stderr, err)
 			if err == nil {
 				break
-			}
-			if strings.Contains(err.Error(), "no supported methods remain") {
-				diags = append(diags, diag.FromErr(err)...)
-				return stdout, diags, err
 			}
 
 			select {
