@@ -77,7 +77,7 @@ The following arguments are supported:
   all create files and commands executions.
 * `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
 * `timeout` - (Optional) Time to wait before considering provisioning as unsuccessful. This spans the copy and command phase. Default is `5m`. Accept seconds (e.g. `300s`) or minutes (e.g. `30m`)
-* `ignore_no_supported_methods_remain` - (Optional, bool) Ignore error handling when received error with no supported methods remain. Default is `false` 
+* `ignore_no_supported_methods_remain` - (Optional, bool) Ignore error handling when received error with no supported methods remain. Default is `false`
 * `retry_delay` - (Optional) Time to wait before retrying an SSH operation (copy or command execution). Default is `10s`.
 
 Each `file` block can contain the following fields. Use either `content` or `source`:
