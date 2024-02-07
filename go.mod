@@ -1,6 +1,6 @@
 module github.com/loafoe/terraform-provider-ssh
 
-go 1.19
+go 1.21
 
 require (
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.32.0

@@ -82,7 +82,7 @@ resource "ssh_resource" "deploy-kubevip" {
 ## Development requirements
 
 -	[Terraform](https://www.terraform.io/downloads.html) 1.3.0 or newer
--	[Go](https://golang.org/doc/install) 1.19 or newer (to build the provider plugin)
+-	[Go](https://golang.org/doc/install) 1.21 or newer (to build the provider plugin)
 
 ## Issues
 
