@@ -18,7 +18,7 @@ import (
 
 func resourceResource() *schema.Resource {
 	return &schema.Resource{
-		SchemaVersion: 4,
+		SchemaVersion: 5,
 		CreateContext: resourceResourceCreate,
 		ReadContext:   resourceResourceRead,
 		UpdateContext: resourceResourceUpdate,
@@ -47,6 +47,11 @@ func resourceResource() *schema.Resource {
 				Type:    resourceResourceV3().CoreConfigSchema().ImpliedType(),
 				Upgrade: patchResourceV3,
 				Version: 3,
+			},
+			{
+				Type:    resourceResourceV4().CoreConfigSchema().ImpliedType(),
+				Upgrade: patchResourceV4,
+				Version: 4,
 			},
 		},
 		Schema: sshResourceSchema(false),
@@ -162,6 +167,11 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Type:     schema.TypeString,
 			Optional: true,
 			Default:  "5m",
+		},
+		"ignore_no_supported_methods_remain": {
+			Type:     schema.TypeBool,
+			Optional: true,
+			Default:  false,
 		},
 		"retry_delay": {
 			Type:     schema.TypeString,
@@ -306,8 +316,11 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
-	timeoutValue, _ := time.ParseDuration(timeout)
-	retryDelayValue, _ := time.ParseDuration(retryDelay)
+	var sshRetryConfig SSHRetryConfig
+
+	sshRetryConfig.timeout, _ = time.ParseDuration(timeout)
+	sshRetryConfig.retryDelay, _ = time.ParseDuration(retryDelay)
+	sshRetryConfig.ignoreUnsupportedAuthMethods = d.Get("ignore_no_supported_methods_remain").(bool)
 
 	if len(hostUser) == 0 {
 		hostUser = user
@@ -370,18 +383,18 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		return diags
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutValue)
+	ctx, cancel := context.WithTimeout(context.Background(), sshRetryConfig.timeout)
 	defer cancel()
 
 	// Run pre commands
 	if len(preCommands) > 0 {
-		_, errDiags, err := runCommands(ctx, retryDelayValue, preCommands, timeoutValue, ssh, m)
+		_, errDiags, err := runCommands(ctx, preCommands, ssh, sshRetryConfig, m)
 		if err != nil {
 			return errDiags
 		}
 	}
 	// Provision files
-	if err := copyFiles(ctx, retryDelayValue, ssh, config, createFiles); err != nil {
+	if err := copyFiles(ctx, sshRetryConfig.retryDelay, ssh, config, createFiles); err != nil {
 		return diag.FromErr(fmt.Errorf("copying files to remote: %w", ctx.Err()))
 	}
 
@@ -390,7 +403,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	}
 
 	// Run commands
-	stdout, errDiags, err := runCommands(ctx, retryDelayValue, commands, timeoutValue, ssh, m)
+	stdout, errDiags, err := runCommands(ctx, commands, ssh, sshRetryConfig, m)
 	if err != nil {
 		return errDiags
 	}
@@ -433,7 +446,13 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 	return diags
 }
 
-func runCommands(ctx context.Context, retryDelay time.Duration, commands []string, timeout time.Duration, ssh *easyssh.MakeConfig, m interface{}) (string, diag.Diagnostics, error) {
+type SSHRetryConfig struct {
+	retryDelay                   time.Duration
+	timeout                      time.Duration
+	ignoreUnsupportedAuthMethods bool
+}
+
+func runCommands(ctx context.Context, commands []string, ssh *easyssh.MakeConfig, sshRetryConfig SSHRetryConfig, m interface{}) (string, diag.Diagnostics, error) {
 	var diags diag.Diagnostics
 	var stdout, stderr string
 	var done bool
@@ -442,18 +461,18 @@ func runCommands(ctx context.Context, retryDelay time.Duration, commands []strin
 
 	for i := 0; i < len(commands); i++ {
 		for {
-			stdout, stderr, done, err = ssh.Run(commands[i], timeout)
+			stdout, stderr, done, err = ssh.Run(commands[i], sshRetryConfig.timeout)
 			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\nerror: %v\n", commands[i], done, stdout, stderr, err)
 			if err == nil {
 				break
 			}
-			if strings.Contains(err.Error(), "no supported methods remain") {
+			if !sshRetryConfig.ignoreUnsupportedAuthMethods && strings.Contains(err.Error(), "no supported methods remain") {
 				diags = append(diags, diag.FromErr(err)...)
 				return stdout, diags, err
 			}
 
 			select {
-			case <-time.After(retryDelay):
+			case <-time.After(sshRetryConfig.retryDelay):
 				// Retry
 
 			case <-ctx.Done():
