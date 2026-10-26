@@ -40,6 +40,18 @@ output "result" {
 The above example snippet uploads a generated shell script, executes it remotely and captures the
 output for further use in Terraform.
 
+## Parallelism and dependencies
+
+The provider does not serialize SSH operations. Terraform and OpenTofu schedule each resource
+instance independently, so `depends_on` inside a module used with `for_each` is evaluated per
+module instance rather than as a global barrier.
+
+If all upstream resources take approximately the same time to finish, downstream resources may
+appear to start as a group. This is normal scheduling behavior. On the first apply error,
+Terraform and OpenTofu stop scheduling new work, so unrelated resource instances may not start.
+
+Use the `-parallelism` command line option to adjust the number of concurrent operations.
+
 ## Argument Reference
 
 The following arguments are supported:
