@@ -22,6 +22,25 @@ terraform {
   }
 }
 ```
+
+### Provider-level connection defaults
+
+Connection settings can be configured once on the provider and reused by all resources:
+
+```hcl
+provider "ssh" {
+  host        = var.ssh_host
+  user        = var.ssh_user
+  private_key = file(var.ssh_private_key)
+}
+
+resource "ssh_resource" "example" {
+  commands = ["hostname"]
+}
+```
+
+Resource-level connection arguments override the provider defaults.
+
 ## Example
 
 ```hcl

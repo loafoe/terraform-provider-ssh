@@ -57,22 +57,24 @@ resource "ssh_resource" "always_run" {
 
 The following arguments are supported:
 
-* `host` - (Required) The IP address or DNS hostname of the target server, without a port. Use the `port` argument for a non-default SSH port
-* `user` - (Required) The username to use for provision activities using SSH
-* `password` - (Optional) The SSH password to use for the host
+Connection arguments can also be configured as defaults on the provider. Values set on the resource take precedence.
+
+* `host` - (Optional) The IP address or DNS hostname of the target server, without a port. Defaults to the provider `host` value. Use the `port` argument for a non-default SSH port
+* `user` - (Optional) The username to use for provision activities using SSH. Defaults to the provider `user` value
+* `password` - (Optional) The SSH password to use for the host. Defaults to the provider `password` value
 * `when` - (Optional) Determines when the file blocks and commands are executed. Options are `create` or `destroy`. Default: `"create"`
-* `bastion_user` - (Optional) A distinct username to use for bastion user. When missing the provided `user` is used
-* `private_key` - (Optional) The SSH private key to use for provision activities. Recommend to use ssh-agent
-* `bastion_private_key` - (Optional) A distinct SSH private key to use for the bastion host. Recommend to use ssh-agent
-* `port` - (Optional) The SSH port to use on the target server. Default: `"22"`
-* `agent` - (Optional) Enforce the use of an SSH-agent. When set, will error in case a private key is provided. Default: 'false'
+* `bastion_user` - (Optional) A distinct username to use for bastion user. Defaults to the provider `bastion_user` value, or the effective `user` when unset
+* `private_key` - (Optional) The SSH private key to use for provision activities. Recommend to use ssh-agent. Defaults to the provider `private_key` value
+* `bastion_private_key` - (Optional) A distinct SSH private key to use for the bastion host. Recommend to use ssh-agent. Defaults to the provider `bastion_private_key` value
+* `port` - (Optional) The SSH port to use on the target server. Defaults to the provider `port` value, or `"22"` when unset
+* `agent` - (Optional) Enforce the use of an SSH-agent. When set, will error in case a private key is provided. Defaults to the provider `agent` value, or `false` when unset
 * `file` - (Optional) Block specifying content to be written to the container host after creation
 * `commands` - (Required, list(string)) List of commands to execute after creation of container host
 * `pre_commands` - (Optional) Similar to `commands` but these are run before files are copied. This is useful if you need to prepare
   the host in some way before you can copy content over e.g. create some directories
-* `bastion_host` - (Optional) The IP address or DNS hostname of the bastion host, without a port. When not set, this will be deduced from the container host location
-* `bastion_port` - (Optional) The SSH port to use on the bastion host. Default: `"22"`
-* `bastion_password` - (Optional) The SSH password to use for the bastion host
+* `bastion_host` - (Optional) The IP address or DNS hostname of the bastion host, without a port. Defaults to the provider `bastion_host` value
+* `bastion_port` - (Optional) The SSH port to use on the bastion host. Defaults to the provider `bastion_port` value, or `"22"` when unset
+* `bastion_password` - (Optional) The SSH password to use for the bastion host. Defaults to the provider `bastion_password` value
 * `triggers` - (Optional, map(string)) A map of values which, when changed, forces recreation of the resource and
   re-runs all file copies and commands. Trigger values may be derived from computed attributes of other resources and
   can be resolved during apply.

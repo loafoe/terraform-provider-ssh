@@ -5,9 +5,24 @@ import (
 	"os"
 )
 
+type SSHConnectionDefaults struct {
+	Host              string
+	Port              string
+	User              string
+	Password          string
+	PrivateKey        string
+	BastionHost       string
+	BastionPort       string
+	BastionUser       string
+	BastionPassword   string
+	BastionPrivateKey string
+	Agent             bool
+}
+
 type Config struct {
-	DebugLog  string
-	debugFile *os.File
+	DebugLog   string
+	debugFile  *os.File
+	Connection SSHConnectionDefaults
 }
 
 func (c *Config) Debug(format string, args ...interface{}) (int, error) {

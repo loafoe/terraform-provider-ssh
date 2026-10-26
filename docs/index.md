@@ -10,6 +10,28 @@ environment and need to use a HTTP proxy to punch through.
 
 Using the `when` attribute you can also choose to run the commands at destroy time.
 
+## Provider configuration
+
+Connection settings can be defined once at provider level and reused by every
+`ssh_resource` and `ssh_sensitive_resource`:
+
+```hcl
+provider "ssh" {
+  host        = var.ssh_host
+  port        = "22"
+  user        = var.ssh_user
+  private_key = file(var.ssh_private_key)
+}
+
+resource "ssh_resource" "example" {
+  commands = ["hostname"]
+}
+```
+
+Arguments set on a resource override the provider defaults. Use provider
+[aliases](https://developer.hashicorp.com/terraform/language/providers/configuration#alias-multiple-provider-configurations)
+when different resources need different connection settings.
+
 ## Example usage
 
 ```hcl
@@ -57,3 +79,14 @@ Use the `-parallelism` command line option to adjust the number of concurrent op
 The following arguments are supported:
 
 * `debug_log` - (Optional, filename) Write debugging info to this file
+* `host` - (Optional) Default IP address or DNS hostname of the target server, without a port
+* `port` - (Optional) Default SSH port to use on the target server. Default: `"22"`
+* `user` - (Optional) Default username to use for SSH authentication
+* `password` - (Optional, sensitive) Default SSH password to use for the target server
+* `private_key` - (Optional, sensitive) Default SSH private key to use for authentication
+* `bastion_host` - (Optional) Default IP address or DNS hostname of the bastion host, without a port
+* `bastion_port` - (Optional) Default SSH port to use on the bastion host. Default: `"22"`
+* `bastion_user` - (Optional) Default username to use for the bastion host
+* `bastion_password` - (Optional, sensitive) Default SSH password to use for the bastion host
+* `bastion_private_key` - (Optional, sensitive) Default SSH private key to use for the bastion host
+* `agent` - (Optional) Default whether to use an SSH agent for authentication. Default: `false`

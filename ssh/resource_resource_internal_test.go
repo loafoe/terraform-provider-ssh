@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-cty/cty"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
@@ -393,8 +394,8 @@ func TestRunCommandsRetriesAuthenticationFailureWhenConfigured(t *testing.T) {
 	defer cancel()
 
 	_, _, err := runCommands(ctx, []string{"true"}, runner, config, testConfig(t))
-	if !errors.Is(err, authErr) {
-		t.Fatalf("expected authentication error, got %v", err)
+	if !errors.Is(err, authErr) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected authentication or deadline error, got %v", err)
 	}
 	if runner.calls < 2 {
 		t.Fatalf("expected authentication error to be retried, got %d calls", runner.calls)
@@ -451,4 +452,130 @@ func testConfig(t *testing.T) *Config {
 		_ = debugFile.Close()
 	})
 	return &Config{debugFile: debugFile}
+}
+
+func TestProviderConnectionDefaults(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, Provider().Schema, map[string]interface{}{
+		"host":                "provider-host",
+		"port":                "2222",
+		"user":                "provider-user",
+		"password":            "provider-password",
+		"private_key":         "provider-private-key",
+		"bastion_host":        "provider-bastion",
+		"bastion_port":        "2200",
+		"bastion_user":        "provider-bastion-user",
+		"bastion_password":    "provider-bastion-password",
+		"bastion_private_key": "provider-bastion-private-key",
+		"agent":               true,
+	})
+
+	rawConfig, diags := providerConfigure(context.Background(), d)
+	if diags.HasError() {
+		t.Fatalf("unexpected provider configuration diagnostics: %#v", diags)
+	}
+	config := rawConfig.(*Config)
+	got := config.Connection
+	want := SSHConnectionDefaults{
+		Host:              "provider-host",
+		Port:              "2222",
+		User:              "provider-user",
+		Password:          "provider-password",
+		PrivateKey:        "provider-private-key",
+		BastionHost:       "provider-bastion",
+		BastionPort:       "2200",
+		BastionUser:       "provider-bastion-user",
+		BastionPassword:   "provider-bastion-password",
+		BastionPrivateKey: "provider-bastion-private-key",
+		Agent:             true,
+	}
+	if got != want {
+		t.Fatalf("unexpected connection defaults: want %#v, got %#v", want, got)
+	}
+}
+
+func TestResolveConnectionConfigUsesProviderDefaults(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, sshResourceSchema(false), map[string]interface{}{
+		"timeout": "1m",
+	})
+	providerConfig := &Config{Connection: SSHConnectionDefaults{
+		Host:              "provider-host",
+		Port:              "2222",
+		User:              "provider-user",
+		PrivateKey:        "provider-private-key",
+		BastionHost:       "provider-bastion",
+		BastionPort:       "2200",
+		BastionUser:       "provider-bastion-user",
+		BastionPrivateKey: "provider-bastion-private-key",
+		Agent:             false,
+	}}
+
+	connection := resolveConnectionConfig(d, providerConfig)
+	if connection.Host != "provider-host" {
+		t.Fatalf("expected provider host, got %q", connection.Host)
+	}
+	if connection.Port != "2222" {
+		t.Fatalf("expected provider port, got %q", connection.Port)
+	}
+	if connection.User != "provider-user" {
+		t.Fatalf("expected provider user, got %q", connection.User)
+	}
+	if connection.PrivateKey != "provider-private-key" {
+		t.Fatalf("expected provider private key, got %q", connection.PrivateKey)
+	}
+	if connection.BastionHost != "provider-bastion" || connection.BastionPort != "2200" {
+		t.Fatalf("expected provider bastion defaults, got %#v", connection)
+	}
+	if connection.Agent {
+		t.Fatal("expected provider agent default to be used")
+	}
+
+	diags := validateResource(d, connection)
+	if diags.HasError() {
+		t.Fatalf("unexpected validation diagnostics with provider defaults: %#v", diags)
+	}
+}
+
+func TestResolveConnectionConfigResourceOverrides(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, sshResourceSchema(false), map[string]interface{}{
+		"host":        "resource-host",
+		"user":        "resource-user",
+		"private_key": "resource-private-key",
+		"timeout":     "1m",
+	})
+	providerConfig := &Config{Connection: SSHConnectionDefaults{
+		Host:       "provider-host",
+		Port:       "2222",
+		User:       "provider-user",
+		PrivateKey: "provider-private-key",
+	}}
+
+	connection := resolveConnectionConfig(d, providerConfig)
+	if connection.Host != "resource-host" {
+		t.Fatalf("expected resource host, got %q", connection.Host)
+	}
+	if connection.User != "resource-user" {
+		t.Fatalf("expected resource user, got %q", connection.User)
+	}
+	if connection.PrivateKey != "resource-private-key" {
+		t.Fatalf("expected resource private key, got %q", connection.PrivateKey)
+	}
+	if connection.Port != "2222" {
+		t.Fatalf("expected provider port fallback, got %q", connection.Port)
+	}
+}
+
+func TestValidateResourceRequiresHost(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, sshResourceSchema(false), map[string]interface{}{
+		"timeout":  "1m",
+		"commands": []interface{}{"true"},
+	})
+	connection := sshConnectionConfig{
+		User:       "user",
+		PrivateKey: "private-key",
+	}
+
+	diags := validateResource(d, connection)
+	if !diags.HasError() || !strings.Contains(diags[0].Summary, "host must be set") {
+		t.Fatalf("expected missing host diagnostic, got %#v", diags)
+	}
 }

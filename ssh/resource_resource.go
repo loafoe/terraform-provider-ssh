@@ -58,7 +58,11 @@ func resourceResource() *schema.Resource {
 	}
 }
 
-func customDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
+func customDiff(_ context.Context, d *schema.ResourceDiff, meta interface{}) error {
+	if err := applyProviderConnectionDefaults(d, meta); err != nil {
+		return err
+	}
+
 	triggersChanged := d.HasChange("triggers")
 	if !triggersChanged {
 		configured, configuredKnown := triggerCount(d.GetRawConfig())
@@ -76,6 +80,34 @@ func customDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error 
 		// applied value be recorded without Terraform reporting an inconsistent
 		// final plan. ForceNew still guarantees the resource is replaced.
 		if err := d.SetNewComputed("triggers"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyProviderConnectionDefaults(d *schema.ResourceDiff, meta interface{}) error {
+	defaults := SSHConnectionDefaults{
+		Port:        "22",
+		BastionPort: "22",
+	}
+	if config, ok := meta.(*Config); ok && config != nil {
+		defaults = config.Connection
+	}
+
+	defaulted := []struct {
+		attribute string
+		value     interface{}
+	}{
+		{attribute: "port", value: defaults.Port},
+		{attribute: "bastion_port", value: defaults.BastionPort},
+		{attribute: "agent", value: defaults.Agent},
+	}
+	for _, item := range defaulted {
+		if configured, known := rawAttributeConfigured(d.GetRawConfig(), item.attribute); known && configured {
+			continue
+		}
+		if err := d.SetNew(item.attribute, item.value); err != nil {
 			return err
 		}
 	}
@@ -116,16 +148,17 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			ForceNew:    true,
 		},
 		"host": {
-			Description:  "The IP address or DNS hostname of the target server, without a port.",
+			Description:  "The IP address or DNS hostname of the target server, without a port. Defaults to the provider 'host' value when omitted.",
 			Type:         schema.TypeString,
-			Required:     true,
+			Optional:     true,
 			ForceNew:     true,
-			ValidateFunc: validateHost,
+			ValidateFunc: validateOptionalHost,
 		},
 		"port": {
-			Type:     schema.TypeString,
-			Optional: true,
-			Default:  "22",
+			Description: "The SSH port to use on the target server. Defaults to the provider 'port' value, or 22 when unset.",
+			Type:        schema.TypeString,
+			Optional:    true,
+			Computed:    true,
 		},
 		"bastion_host": {
 			Description:  "The IP address or DNS hostname of the bastion host, without a port.",
@@ -134,9 +167,10 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			ValidateFunc: validateOptionalHost,
 		},
 		"bastion_port": {
-			Type:     schema.TypeString,
-			Optional: true,
-			Default:  "22",
+			Description: "The SSH port to use on the bastion host. Defaults to the provider 'bastion_port' value, or 22 when unset.",
+			Type:        schema.TypeString,
+			Optional:    true,
+			Computed:    true,
 		},
 		"user": {
 			Type:     schema.TypeString,
@@ -181,9 +215,10 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Sensitive: true,
 		},
 		"agent": {
-			Type:     schema.TypeBool,
-			Optional: true,
-			Default:  false,
+			Description: "Whether to use an SSH agent for authentication. Defaults to the provider 'agent' value, or false when unset.",
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Computed:    true,
 		},
 		"pre_commands": {
 			Type:     schema.TypeList,
@@ -284,17 +319,94 @@ func hasErrors(diags diag.Diagnostics) bool {
 	return false
 }
 
-func validateResource(d *schema.ResourceData) diag.Diagnostics {
+type sshConnectionConfig struct {
+	Host              string
+	Port              string
+	User              string
+	Password          string
+	PrivateKey        string
+	HostUser          string
+	HostPrivateKey    string
+	BastionHost       string
+	BastionPort       string
+	BastionUser       string
+	BastionPassword   string
+	BastionPrivateKey string
+	Agent             bool
+}
+
+func resolveConnectionConfig(d *schema.ResourceData, providerConfig *Config) sshConnectionConfig {
+	connection := sshConnectionConfig{
+		Host:              providerConfig.Connection.Host,
+		Port:              providerConfig.Connection.Port,
+		User:              providerConfig.Connection.User,
+		Password:          providerConfig.Connection.Password,
+		PrivateKey:        providerConfig.Connection.PrivateKey,
+		BastionHost:       providerConfig.Connection.BastionHost,
+		BastionPort:       providerConfig.Connection.BastionPort,
+		BastionUser:       providerConfig.Connection.BastionUser,
+		BastionPassword:   providerConfig.Connection.BastionPassword,
+		BastionPrivateKey: providerConfig.Connection.BastionPrivateKey,
+		Agent:             providerConfig.Connection.Agent,
+	}
+
+	setString := func(attribute string, target *string) {
+		if value, ok := d.GetOk(attribute); ok {
+			*target = value.(string)
+		}
+	}
+	setString("host", &connection.Host)
+	setString("user", &connection.User)
+	setString("password", &connection.Password)
+	setString("private_key", &connection.PrivateKey)
+	setString("bastion_host", &connection.BastionHost)
+	setString("bastion_user", &connection.BastionUser)
+	setString("bastion_password", &connection.BastionPassword)
+	setString("bastion_private_key", &connection.BastionPrivateKey)
+
+	if resourceAttributeConfigured(d, "port") {
+		connection.Port = d.Get("port").(string)
+	}
+	if resourceAttributeConfigured(d, "bastion_port") {
+		connection.BastionPort = d.Get("bastion_port").(string)
+	}
+	if resourceAttributeConfigured(d, "agent") {
+		connection.Agent = d.Get("agent").(bool)
+	}
+
+	// Deprecated per-host overrides take precedence over the generic values.
+	if value := d.Get("host_user").(string); value != "" {
+		connection.HostUser = value
+	}
+	if value := d.Get("host_private_key").(string); value != "" {
+		connection.HostPrivateKey = value
+	}
+
+	return connection
+}
+
+func resourceAttributeConfigured(d *schema.ResourceData, attribute string) bool {
+	for _, raw := range []cty.Value{d.GetRawConfig(), d.GetRawPlan(), d.GetRawState()} {
+		if configured, known := rawAttributeConfigured(raw, attribute); known {
+			return configured
+		}
+	}
+	return false
+}
+
+func rawAttributeConfigured(raw cty.Value, attribute string) (bool, bool) {
+	if raw.IsNull() || !raw.IsKnown() || !raw.Type().IsObjectType() || !raw.Type().HasAttribute(attribute) {
+		return false, false
+	}
+	return !raw.GetAttr(attribute).IsNull(), true
+}
+
+func validateResource(d *schema.ResourceData, connection sshConnectionConfig) diag.Diagnostics {
 	var diags diag.Diagnostics
 	var commands []string
 
 	timeout := d.Get("timeout").(string)
-	user := d.Get("user").(string)
-	agent := d.Get("agent").(bool)
-	privateKey := d.Get("private_key").(string)
-	hostPrivateKey := d.Get("host_private_key").(string)
 	retryDelay := d.Get("retry_delay").(string)
-	password := d.Get("password").(string)
 
 	timeoutValue, err := time.ParseDuration(timeout)
 	if err != nil {
@@ -307,10 +419,19 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 	if retryDelayValue >= timeoutValue {
 		return diag.FromErr(fmt.Errorf("retry_delay cannot be greater than timeout (%d >= %d)", retryDelayValue, timeoutValue))
 	}
-
-	if len(hostPrivateKey) == 0 {
-		hostPrivateKey = privateKey
+	if connection.Host == "" {
+		return diag.FromErr(fmt.Errorf("host must be set on the resource or in the provider configuration"))
 	}
+
+	hostPrivateKey := connection.HostPrivateKey
+	if hostPrivateKey == "" {
+		hostPrivateKey = connection.PrivateKey
+	}
+	hostUser := connection.HostUser
+	if hostUser == "" {
+		hostUser = connection.User
+	}
+
 	_, diags = collectFilesToCreate(d)
 	if len(diags) > 0 {
 		return diags
@@ -320,14 +441,14 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 		return diags
 	}
 	if len(commands) > 0 {
-		if user == "" {
-			return diag.FromErr(fmt.Errorf("user must be set when 'commands' is specified"))
+		if hostUser == "" {
+			return diag.FromErr(fmt.Errorf("user must be set on the resource or in the provider configuration when 'commands' is specified"))
 		}
-		if !agent && privateKey == "" && password == "" {
-			return diag.FromErr(fmt.Errorf("'privateKey' must be set when 'commands' is specified and 'agent' is false and no 'password' is given"))
+		if !connection.Agent && hostPrivateKey == "" && connection.Password == "" {
+			return diag.FromErr(fmt.Errorf("'privateKey' must be set on the resource or in the provider configuration when 'commands' is specified and 'agent' is false and no 'password' is given"))
 		}
 	}
-	if agent && (hostPrivateKey != "" || privateKey != "" || password != "") {
+	if connection.Agent && (hostPrivateKey != "" || connection.PrivateKey != "" || connection.Password != "") {
 		return diag.FromErr(fmt.Errorf("agent mode is enabled, not expecting a password or private key"))
 	}
 	return diags
@@ -335,27 +456,16 @@ func validateResource(d *schema.ResourceData) diag.Diagnostics {
 
 func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate bool) diag.Diagnostics {
 	config := m.(*Config)
+	connection := resolveConnectionConfig(d, config)
 
-	if diags := validateResource(d); len(diags) > 0 {
+	if diags := validateResource(d, connection); len(diags) > 0 {
 		return diags
 	}
 
-	bastionHost := d.Get("bastion_host").(string)
-	user := d.Get("user").(string)
-	hostUser := d.Get("host_user").(string)
-	bastionUser := d.Get("bastion_user").(string)
-	password := d.Get("password").(string)
-	bastionPassword := d.Get("bastion_password").(string)
-	privateKey := d.Get("private_key").(string)
 	privateKeyPassphrase, _ := schema.EnvDefaultFunc("SSH_PRIVATE_KEY_PASSPHRASE", "")()
-	hostPrivateKey := d.Get("host_private_key").(string)
-	bastionPrivateKey := d.Get("bastion_private_key").(string)
 	bastionPrivateKeyPassphrase, _ := schema.EnvDefaultFunc("SSH_BASTION_PRIVATE_KEY_PASSPHRASE", "")()
-	host := d.Get("host").(string)
 	timeout := d.Get("timeout").(string)
 	retryDelay := d.Get("retry_delay").(string)
-	port := d.Get("port").(string)
-	bastionPort := d.Get("bastion_port").(string)
 	commandsAfterFileChanges := d.Get("commands_after_file_changes").(bool)
 
 	var sshRetryConfig SSHRetryConfig
@@ -364,12 +474,15 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	sshRetryConfig.retryDelay, _ = time.ParseDuration(retryDelay)
 	sshRetryConfig.ignoreUnsupportedAuthMethods = d.Get("ignore_no_supported_methods_remain").(bool)
 
+	hostUser := connection.HostUser
 	if len(hostUser) == 0 {
-		hostUser = user
+		hostUser = connection.User
 	}
+	hostPrivateKey := connection.HostPrivateKey
 	if len(hostPrivateKey) == 0 {
-		hostPrivateKey = privateKey
+		hostPrivateKey = connection.PrivateKey
 	}
+
 	// Pre commands
 	preCommands, diags := collectCommands(d, "pre_commands")
 	if len(diags) > 0 {
@@ -387,38 +500,37 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 	}
 
 	// Collect SSH details
-	privateIP := host
 	ssh := &easyssh.MakeConfig{
 		User:       hostUser,
-		Server:     privateIP,
-		Port:       port,
-		Key:        privateKey,
+		Server:     connection.Host,
+		Port:       connection.Port,
+		Key:        connection.PrivateKey,
 		Passphrase: privateKeyPassphrase.(string),
 		Proxy:      proxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
-			User:       user,
-			Server:     bastionHost,
+			User:       connection.User,
+			Server:     connection.BastionHost,
 			Passphrase: bastionPrivateKeyPassphrase.(string),
-			Port:       bastionPort,
+			Port:       connection.BastionPort,
 		},
 	}
-	if password != "" {
-		ssh.Password = password
+	if connection.Password != "" {
+		ssh.Password = connection.Password
 	}
-	if bastionPassword != "" {
-		ssh.Bastion.Password = bastionPassword
+	if connection.BastionPassword != "" {
+		ssh.Bastion.Password = connection.BastionPassword
 	}
-	if bastionUser != "" {
-		ssh.Bastion.User = bastionUser
+	if connection.BastionUser != "" {
+		ssh.Bastion.User = connection.BastionUser
 	}
 	if hostPrivateKey != "" {
 		ssh.Key = hostPrivateKey
 	}
-	if privateKey != "" {
-		ssh.Bastion.Key = privateKey
+	if connection.PrivateKey != "" {
+		ssh.Bastion.Key = connection.PrivateKey
 	}
-	if bastionPrivateKey != "" {
-		ssh.Bastion.Key = bastionPrivateKey
+	if connection.BastionPrivateKey != "" {
+		ssh.Bastion.Key = connection.BastionPrivateKey
 	}
 
 	if onUpdate && !(d.HasChange("file") || d.HasChange("commands")) {
@@ -484,7 +596,9 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 	if when == "create" {
 		diags = mainRun(ctx, d, m, false)
 	} else {
-		diags = validateResource(d)
+		config := m.(*Config)
+		connection := resolveConnectionConfig(d, config)
+		diags = validateResource(d, connection)
 	}
 
 	if !hasErrors(diags) {
