@@ -82,8 +82,8 @@ The following arguments are supported:
 
 Each `file` block can contain the following fields. Use either `content` or `source`:
 
-* `source` - (Optional, file path) Content of the file. Conflicts with `content`
-* `content` - (Optional, string) Content of the file. Conflicts with `source`
+* `source` - (Optional, file path) Path to a local file to copy. Conflicts with `content`
+* `content` - (Optional, string) Content of the file. Conflicts with `source`. Set to an empty string to create an empty file
 * `destination` - (Required, string) Remote filename to store the content in
 * `permissions` - (Optional, string) The file permissions. Default permissions are "0644"
 * `owner` - (Optional, string) The file owner. Default owner the SSH user

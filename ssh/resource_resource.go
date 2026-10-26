@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -189,13 +190,15 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Elem: &schema.Resource{
 				Schema: map[string]*schema.Schema{
 					"source": {
-						Type:     schema.TypeString,
-						Optional: true,
+						Description: "Path to a local file to copy to the remote host. Conflicts with 'content'.",
+						Type:        schema.TypeString,
+						Optional:    true,
 					},
 					"content": {
-						Type:      schema.TypeString,
-						Optional:  true,
-						Sensitive: sensitive,
+						Description: "Content to write to the remote file. Conflicts with 'source'. An empty string creates an empty file.",
+						Type:        schema.TypeString,
+						Optional:    true,
+						Sensitive:   sensitive,
 					},
 					"destination": {
 						Type:     schema.TypeString,
@@ -584,10 +587,89 @@ type provisionFile struct {
 	Group       string
 }
 
+// provisionFilePresence tracks which of the mutually exclusive source/content
+// fields were explicitly set in the configuration. ResourceData returns the
+// zero value for both fields, so this is needed to distinguish an omitted
+// content field from an explicitly empty one.
+type provisionFilePresence struct {
+	Source  bool
+	Content bool
+}
+
+func configuredFiles(rawConfig cty.Value) map[string]provisionFilePresence {
+	presence := make(map[string]provisionFilePresence)
+	if rawConfig.IsNull() || !rawConfig.IsKnown() || !rawConfig.Type().IsObjectType() || !rawConfig.Type().HasAttribute("file") {
+		return presence
+	}
+
+	files := rawConfig.GetAttr("file")
+	if files.IsNull() || !files.IsKnown() || !files.CanIterateElements() {
+		return presence
+	}
+
+	for it := files.ElementIterator(); it.Next(); {
+		_, value := it.Element()
+		if value.IsNull() || !value.IsKnown() || !value.Type().IsObjectType() {
+			continue
+		}
+
+		destination := value.GetAttr("destination")
+		if destination.IsNull() || !destination.IsKnown() {
+			continue
+		}
+
+		p := presence[destination.AsString()]
+		p.Source = p.Source || !value.GetAttr("source").IsNull()
+		p.Content = p.Content || !value.GetAttr("content").IsNull()
+		presence[destination.AsString()] = p
+	}
+
+	return presence
+}
+
+func configuredFilesForResource(d *schema.ResourceData) map[string]provisionFilePresence {
+	for _, rawConfig := range []cty.Value{d.GetRawConfig(), d.GetRawPlan(), d.GetRawState()} {
+		if presence := configuredFiles(rawConfig); len(presence) > 0 {
+			return presence
+		}
+	}
+	return map[string]provisionFilePresence{}
+}
+
+func validateProvisionFile(file provisionFile, presence provisionFilePresence) *diag.Diagnostic {
+	sourceSet := file.Source != "" || presence.Source
+	contentSet := file.Content != "" || presence.Content
+
+	if sourceSet && contentSet {
+		return &diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "conflict in file block",
+			Detail:   fmt.Sprintf("file %s has conflicting 'source' and 'content', choose only one", file.Destination),
+		}
+	}
+	if sourceSet && file.Source == "" {
+		return &diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "invalid source in file block",
+			Detail:   fmt.Sprintf("file %s has an empty 'source', set a valid path or use 'content'", file.Destination),
+		}
+	}
+	if !sourceSet && !contentSet {
+		return &diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "conflict in file block",
+			Detail:   fmt.Sprintf("file %s has neither 'source' nor 'content' set, set one (an empty 'content' creates an empty file)", file.Destination),
+		}
+	}
+
+	return nil
+}
+
 func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	files := make([]provisionFile, 0)
 	if v, ok := d.GetOk("file"); ok {
+		presence := configuredFilesForResource(d)
 		vL := v.(*schema.Set).List()
 		for _, vi := range vL {
 			mVi := vi.(map[string]interface{})
@@ -599,20 +681,8 @@ func collectFilesToCreate(d *schema.ResourceData) ([]provisionFile, diag.Diagnos
 				Owner:       mVi["owner"].(string),
 				Group:       mVi["group"].(string),
 			}
-			if file.Source == "" && file.Content == "" {
-				diags = append(diags, diag.Diagnostic{
-					Severity: diag.Error,
-					Summary:  "conflict in file block",
-					Detail:   fmt.Sprintf("file %s has neither 'source' or 'content', set one", file.Destination),
-				})
-				continue
-			}
-			if file.Source != "" && file.Content != "" {
-				diags = append(diags, diag.Diagnostic{
-					Severity: diag.Error,
-					Summary:  "conflict in file block",
-					Detail:   fmt.Sprintf("file %s has conflicting 'source' and 'content', choose only one", file.Destination),
-				})
+			if fileDiag := validateProvisionFile(file, presence[file.Destination]); fileDiag != nil {
+				diags = append(diags, *fileDiag)
 				continue
 			}
 			if file.Source != "" {
