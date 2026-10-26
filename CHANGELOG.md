@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## Unreleased
+## v2.8.1
 
 - Return file upload errors instead of masking them with a timeout (#104)
 - Fail commands that exceed the configured timeout (#78)
