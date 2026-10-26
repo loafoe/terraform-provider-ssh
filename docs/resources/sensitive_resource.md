@@ -37,7 +37,7 @@ resource "ssh_sensitive_resource" "init" {
 
 The following arguments are supported:
 
-* `host` - (Required) The IP address or DNS hostname of the target server
+* `host` - (Required) The IP address or DNS hostname of the target server, without a port. Use the `port` argument for a non-default SSH port
 * `user` - (Required) The username to use for provision activities using SSH
 * `when` - (Optional) Determines when the file blocks and commands are executed. Options are `create` or `destroy`. Default: `"create"`
 * `host_user` - (Optional) A distinct username to use for provision activities when provided. When missing the provided `user` is used
@@ -49,7 +49,7 @@ The following arguments are supported:
 * `commands` - (Required, list(string)) List of commands to execute after creation of container host
 * `pre_commands` - (Optional) Similar to `commands` but these are run before files are copied. This is useful if you need to prepare
   the host in some way before you can copy content over e.g. create some directories
-* `bastion_host` - (Optional) The bastion host to use.  When not set, this will be deduced from the container host location
+* `bastion_host` - (Optional) The IP address or DNS hostname of the bastion host, without a port. When not set, this will be deduced from the container host location
 * `bastion_port` - (Optional) The SSH port to use on the bastion host. Default: `"22"`
 * `triggers` - (Optional, map(string)) A map of values which, when changed, forces recreation of the resource and
   re-runs all file copies and commands. Trigger values may be derived from computed attributes of other resources and

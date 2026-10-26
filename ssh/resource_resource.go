@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -117,9 +116,11 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			ForceNew:    true,
 		},
 		"host": {
-			Type:     schema.TypeString,
-			Required: true,
-			ForceNew: true,
+			Description:  "The IP address or DNS hostname of the target server, without a port.",
+			Type:         schema.TypeString,
+			Required:     true,
+			ForceNew:     true,
+			ValidateFunc: validateHost,
 		},
 		"port": {
 			Type:     schema.TypeString,
@@ -127,8 +128,10 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Default:  "22",
 		},
 		"bastion_host": {
-			Type:     schema.TypeString,
-			Optional: true,
+			Description:  "The IP address or DNS hostname of the bastion host, without a port.",
+			Type:         schema.TypeString,
+			Optional:     true,
+			ValidateFunc: validateOptionalHost,
 		},
 		"bastion_port": {
 			Type:     schema.TypeString,
@@ -390,7 +393,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		Port:       port,
 		Key:        privateKey,
 		Passphrase: privateKeyPassphrase.(string),
-		Proxy:      http.ProxyFromEnvironment,
+		Proxy:      proxyFromEnvironment,
 		Bastion: easyssh.DefaultConfig{
 			User:       user,
 			Server:     bastionHost,
