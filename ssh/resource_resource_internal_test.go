@@ -2,8 +2,11 @@ package ssh
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
@@ -298,4 +301,154 @@ func TestCustomDiffMarksChangedTriggersComputed(t *testing.T) {
 	if resultDiff == nil || !resultDiff.NewComputed {
 		t.Fatalf("expected result to be marked computed, got %#v", resultDiff)
 	}
+}
+
+type fakeRunResult struct {
+	stdout string
+	stderr string
+	done   bool
+	err    error
+}
+
+type fakeCommandRunner struct {
+	results  []fakeRunResult
+	calls    int
+	timeouts []time.Duration
+}
+
+func (f *fakeCommandRunner) Run(_ string, timeout ...time.Duration) (string, string, bool, error) {
+	f.calls++
+	if len(timeout) > 0 {
+		f.timeouts = append(f.timeouts, timeout[0])
+	}
+	resultIndex := f.calls - 1
+	if resultIndex >= len(f.results) {
+		resultIndex = len(f.results) - 1
+	}
+	result := f.results[resultIndex]
+	return result.stdout, result.stderr, result.done, result.err
+}
+
+func TestRunCommandsSuccess(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeRunResult{{stdout: "ok", done: true}}}
+	config := SSHRetryConfig{timeout: time.Minute, retryDelay: time.Millisecond}
+
+	stdout, diags, err := runCommands(context.Background(), []string{"hostname"}, runner, config, testConfig(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics: %#v", diags)
+	}
+	if stdout != "ok" {
+		t.Fatalf("expected stdout %q, got %q", "ok", stdout)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected one call, got %d", runner.calls)
+	}
+}
+
+func TestRunCommandsCommandTimeoutFailsWithoutRetry(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeRunResult{{stdout: "partial", stderr: "still running", done: false}}}
+	config := SSHRetryConfig{timeout: time.Second, retryDelay: time.Millisecond}
+
+	_, diags, err := runCommands(context.Background(), []string{"sleep 300"}, runner, config, testConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "timed out after") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected command timeout to fail without retrying, got %d calls", runner.calls)
+	}
+	if len(diags) == 0 {
+		t.Fatal("expected diagnostics for command timeout")
+	}
+}
+
+func TestRunCommandsAuthenticationFailureFailsFast(t *testing.T) {
+	authErr := errors.New("ssh: handshake failed: no supported methods remain")
+	runner := &fakeCommandRunner{results: []fakeRunResult{{err: authErr}}}
+	config := SSHRetryConfig{timeout: time.Minute, retryDelay: time.Millisecond}
+
+	_, diags, err := runCommands(context.Background(), []string{"true"}, runner, config, testConfig(t))
+	if !errors.Is(err, authErr) {
+		t.Fatalf("expected authentication error, got %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected authentication failure to fail without retrying, got %d calls", runner.calls)
+	}
+	if len(diags) == 0 {
+		t.Fatal("expected diagnostics for authentication failure")
+	}
+}
+
+func TestRunCommandsRetriesAuthenticationFailureWhenConfigured(t *testing.T) {
+	authErr := errors.New("ssh: handshake failed: no supported methods remain")
+	runner := &fakeCommandRunner{results: []fakeRunResult{{err: authErr}}}
+	config := SSHRetryConfig{
+		timeout:                      time.Second,
+		retryDelay:                   time.Millisecond,
+		ignoreUnsupportedAuthMethods: true,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, _, err := runCommands(ctx, []string{"true"}, runner, config, testConfig(t))
+	if !errors.Is(err, authErr) {
+		t.Fatalf("expected authentication error, got %v", err)
+	}
+	if runner.calls < 2 {
+		t.Fatalf("expected authentication error to be retried, got %d calls", runner.calls)
+	}
+}
+
+func TestIsUnsupportedAuthError(t *testing.T) {
+	if isUnsupportedAuthError(nil) {
+		t.Fatal("nil error should not be an unsupported auth error")
+	}
+	if !isUnsupportedAuthError(errors.New("ssh: no supported methods remain")) {
+		t.Fatal("expected unsupported auth error to be detected")
+	}
+	if isUnsupportedAuthError(errors.New("connection refused")) {
+		t.Fatal("unexpected unsupported auth error detection")
+	}
+}
+
+func TestBoundedCommandTimeout(t *testing.T) {
+	configured := 5 * time.Minute
+
+	got, err := boundedCommandTimeout(context.Background(), configured)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != configured {
+		t.Fatalf("expected configured timeout %s, got %s", configured, got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	got, err = boundedCommandTimeout(ctx, configured)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got <= 0 || got > 500*time.Millisecond {
+		t.Fatalf("expected timeout bounded by context deadline, got %s", got)
+	}
+
+	expiredCtx, expiredCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer expiredCancel()
+	if _, err := boundedCommandTimeout(expiredCtx, configured); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline error, got %v", err)
+	}
+}
+
+func testConfig(t *testing.T) *Config {
+	t.Helper()
+	debugFile, err := os.CreateTemp(t.TempDir(), "provider-debug-*.log")
+	if err != nil {
+		t.Fatalf("creating debug file: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = debugFile.Close()
+	})
+	return &Config{debugFile: debugFile}
 }

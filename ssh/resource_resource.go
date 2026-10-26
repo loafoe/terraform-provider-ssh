@@ -208,9 +208,10 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Default:  "5m",
 		},
 		"ignore_no_supported_methods_remain": {
-			Type:     schema.TypeBool,
-			Optional: true,
-			Default:  false,
+			Description: "Retry when authentication fails with 'no supported methods remain' instead of failing immediately.",
+			Type:        schema.TypeBool,
+			Optional:    true,
+			Default:     false,
 		},
 		"retry_delay": {
 			Type:     schema.TypeString,
@@ -435,8 +436,8 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		}
 	}
 	// Provision files
-	if err := copyFiles(ctx, sshRetryConfig.retryDelay, ssh, config, createFiles); err != nil {
-		return diag.FromErr(fmt.Errorf("copying files to remote: %w", ctx.Err()))
+	if err := copyFiles(ctx, ssh, config, sshRetryConfig, createFiles); err != nil {
+		return diag.FromErr(fmt.Errorf("copying files to remote: %w", err))
 	}
 
 	if onUpdate && !commandsAfterFileChanges {
@@ -501,22 +502,37 @@ type SSHRetryConfig struct {
 	ignoreUnsupportedAuthMethods bool
 }
 
-func runCommands(ctx context.Context, commands []string, ssh *easyssh.MakeConfig, sshRetryConfig SSHRetryConfig, m interface{}) (string, diag.Diagnostics, error) {
+type sshCommandRunner interface {
+	Run(command string, timeout ...time.Duration) (string, string, bool, error)
+}
+
+func runCommands(ctx context.Context, commands []string, ssh sshCommandRunner, sshRetryConfig SSHRetryConfig, m interface{}) (string, diag.Diagnostics, error) {
 	var diags diag.Diagnostics
 	var stdout, stderr string
-	var done bool
-	var err error
 	config := m.(*Config)
 
 	for i := 0; i < len(commands); i++ {
 		for {
-			stdout, stderr, done, err = ssh.Run(commands[i], sshRetryConfig.timeout)
+			commandTimeout, timeoutErr := boundedCommandTimeout(ctx, sshRetryConfig.timeout)
+			if timeoutErr != nil {
+				diags = append(diags, commandFailureDiags(commands[i], timeoutErr, stdout, stderr)...)
+				return stdout, diags, timeoutErr
+			}
+
+			var done bool
+			var err error
+			stdout, stderr, done, err = ssh.Run(commands[i], commandTimeout)
 			_, _ = config.Debug("command: %s\ndone: %t\nstdout:\n%s\nstderr:\n%s\nerror: %v\n", commands[i], done, stdout, stderr, err)
 			if err == nil {
-				break
+				if done {
+					break
+				}
+				timeoutErr = fmt.Errorf("execution of command '%s' timed out after %s", commands[i], commandTimeout)
+				diags = append(diags, commandFailureDiags(commands[i], timeoutErr, stdout, stderr)...)
+				return stdout, diags, timeoutErr
 			}
-			if !sshRetryConfig.ignoreUnsupportedAuthMethods && strings.Contains(err.Error(), "no supported methods remain") {
-				diags = append(diags, diag.FromErr(err)...)
+			if !sshRetryConfig.ignoreUnsupportedAuthMethods && isUnsupportedAuthError(err) {
+				diags = append(diags, commandFailureDiags(commands[i], err, stdout, stderr)...)
 				return stdout, diags, err
 			}
 
@@ -526,18 +542,7 @@ func runCommands(ctx context.Context, commands []string, ssh *easyssh.MakeConfig
 
 			case <-ctx.Done():
 				_, _ = config.Debug("error: %v\n", err)
-				diags = append(diags, diag.Diagnostic{
-					Severity: diag.Error,
-					Summary:  fmt.Sprintf("execution of command '%s' failed: %s: %s", commands[i], ctx.Err(), err),
-					Detail:   stdout,
-				})
-				if stderr != "" {
-					diags = append(diags, diag.Diagnostic{
-						Severity: diag.Error,
-						Summary:  "stderr output",
-						Detail:   stderr,
-					})
-				}
+				diags = append(diags, commandFailureDiags(commands[i], fmt.Errorf("%s: %w", ctx.Err(), err), stdout, stderr)...)
 				return stdout, diags, err
 			}
 		}
@@ -545,7 +550,45 @@ func runCommands(ctx context.Context, commands []string, ssh *easyssh.MakeConfig
 	return stdout, diags, nil
 }
 
-func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeConfig, config *Config, createFiles []provisionFile) error {
+func commandFailureDiags(command string, err error, stdout, stderr string) diag.Diagnostics {
+	diags := diag.Diagnostics{{
+		Severity: diag.Error,
+		Summary:  fmt.Sprintf("execution of command '%s' failed: %s", command, err),
+		Detail:   stdout,
+	}}
+	if stderr != "" {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "stderr output",
+			Detail:   stderr,
+		})
+	}
+	return diags
+}
+
+func isUnsupportedAuthError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no supported methods remain")
+}
+
+func boundedCommandTimeout(ctx context.Context, timeout time.Duration) (time.Duration, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return timeout, nil
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		return 0, context.DeadlineExceeded
+	}
+	if remaining < timeout {
+		return remaining, nil
+	}
+	return timeout, nil
+}
+
+func copyFiles(ctx context.Context, ssh *easyssh.MakeConfig, config *Config, sshRetryConfig SSHRetryConfig, createFiles []provisionFile) error {
 	for _, f := range createFiles {
 		copyFile := func(f provisionFile) error {
 			if f.Source != "" {
@@ -560,7 +603,11 @@ func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeC
 					_ = src.Close()
 					return statErr
 				}
-				_ = ssh.WriteFile(src, srcStat.Size(), f.Destination)
+				if err := ssh.WriteFile(src, srcStat.Size(), f.Destination); err != nil {
+					_ = src.Close()
+					_, _ = config.Debug("Failed to copy source file %s to remote file %s:%s:%s: %v\n", f.Source, ssh.Server, ssh.Port, f.Destination, err)
+					return err
+				}
 				_, _ = config.Debug("Copied %s to remote file %s:%s: %d bytes\n", f.Source, ssh.Server, f.Destination, srcStat.Size())
 				_ = src.Close()
 			} else {
@@ -573,25 +620,19 @@ func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeC
 			}
 			// Permissions change
 			if f.Permissions != "" {
-				outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chmod %s \"%s\"", f.Permissions, f.Destination))
-				_, _ = config.Debug("Permissions file %s:%s: %v %v\n", f.Destination, f.Permissions, outStr, errStr)
-				if err != nil {
+				if err := runFileMetadataCommand(ctx, ssh, config, fmt.Sprintf("chmod %s \"%s\"", f.Permissions, f.Destination), sshRetryConfig.timeout); err != nil {
 					return err
 				}
 			}
 			// Owner
 			if f.Owner != "" {
-				outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chown %s \"%s\"", f.Owner, f.Destination))
-				_, _ = config.Debug("Owner file %s:%s: %v %v\n", f.Destination, f.Owner, outStr, errStr)
-				if err != nil {
+				if err := runFileMetadataCommand(ctx, ssh, config, fmt.Sprintf("chown %s \"%s\"", f.Owner, f.Destination), sshRetryConfig.timeout); err != nil {
 					return err
 				}
 			}
 			// Group
 			if f.Group != "" {
-				outStr, errStr, _, err := ssh.Run(fmt.Sprintf("chgrp %s \"%s\"", f.Group, f.Destination))
-				_, _ = config.Debug("Group file %s:%s: %v %v\n", f.Destination, f.Group, outStr, errStr)
-				if err != nil {
+				if err := runFileMetadataCommand(ctx, ssh, config, fmt.Sprintf("chgrp %s \"%s\"", f.Group, f.Destination), sshRetryConfig.timeout); err != nil {
 					return err
 				}
 			}
@@ -602,13 +643,32 @@ func copyFiles(ctx context.Context, retryDelay time.Duration, ssh *easyssh.MakeC
 			if err == nil {
 				break
 			}
+			if !sshRetryConfig.ignoreUnsupportedAuthMethods && isUnsupportedAuthError(err) {
+				return fmt.Errorf("file %s: %w", f.Destination, err)
+			}
 			select {
-			case <-time.After(retryDelay):
-			// Retry
+			case <-time.After(sshRetryConfig.retryDelay):
+				// Retry
 			case <-ctx.Done():
-				return fmt.Errorf("%s: %w", ctx.Err(), err)
+				return fmt.Errorf("file %s: %w (retry deadline: %v)", f.Destination, err, ctx.Err())
 			}
 		}
+	}
+	return nil
+}
+
+func runFileMetadataCommand(ctx context.Context, ssh *easyssh.MakeConfig, config *Config, command string, timeout time.Duration) error {
+	commandTimeout, err := boundedCommandTimeout(ctx, timeout)
+	if err != nil {
+		return err
+	}
+	outStr, errStr, done, err := ssh.Run(command, commandTimeout)
+	_, _ = config.Debug("%s: %v %v\n", command, outStr, errStr)
+	if err != nil {
+		return fmt.Errorf("%s: %w", command, err)
+	}
+	if !done {
+		return fmt.Errorf("%s timed out after %s", command, commandTimeout)
 	}
 	return nil
 }

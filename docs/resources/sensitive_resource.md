@@ -56,7 +56,7 @@ The following arguments are supported:
   can be resolved during apply.
 * `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
 * `timeout` - (Optional) Time to wait before considering provisioning as unsuccessful. This spans the copy and command phase. Default is `5m`. Accept seconds (e.g. `300s`) or minutes (e.g. `30m`)
-* `ignore_no_supported_methods_remain` - (Optional, bool) Ignore error handling when received error with no supported methods remain. Default is `false`
+* `ignore_no_supported_methods_remain` - (Optional, bool) Retry file uploads and commands when authentication fails with `no supported methods remain`. This is useful when SSH keys are provisioned asynchronously. Default is `false`, which returns the authentication error immediately
 * `retry_delay` - (Optional) Time to wait before retrying an SSH operation (copy or command execution). Default is `10s`.
 
 Each `file` block can contain the following fields. Use either `content` or `source`:

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## Unreleased
+
+- Return file upload errors instead of masking them with a timeout (#104)
+- Fail commands that exceed the configured timeout (#78)
+- Fail fast on authentication errors during file uploads unless `ignore_no_supported_methods_remain` is enabled
+- Bound file permission, owner, and group commands by the configured timeout
+
 ## v2.8.0
 
 - Add MLKEM key exchange support by updating `golang.org/x/crypto` (#105)
