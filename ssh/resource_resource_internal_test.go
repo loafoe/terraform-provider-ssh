@@ -1,10 +1,12 @@
 package ssh
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/go-cty/cty"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 func TestConfiguredFiles(t *testing.T) {
@@ -148,5 +150,152 @@ func TestValidateProvisionFile(t *testing.T) {
 				t.Fatalf("expected diagnostic detail containing %q, got %q", tt.errorDetail, got.Detail)
 			}
 		})
+	}
+}
+
+func TestTriggersFromRawConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   cty.Value
+		expected map[string]interface{}
+		ok       bool
+	}{
+		{
+			name:   "null config",
+			config: cty.NullVal(cty.DynamicPseudoType),
+		},
+		{
+			name: "unset triggers",
+			config: cty.ObjectVal(map[string]cty.Value{
+				"triggers": cty.NullVal(cty.Map(cty.String)),
+			}),
+			expected: map[string]interface{}{},
+			ok:       true,
+		},
+		{
+			name: "configured triggers",
+			config: cty.ObjectVal(map[string]cty.Value{
+				"triggers": cty.MapVal(map[string]cty.Value{
+					"config_md5": cty.StringVal("abc"),
+					"always_run": cty.StringVal("1"),
+				}),
+			}),
+			expected: map[string]interface{}{
+				"config_md5": "abc",
+				"always_run": "1",
+			},
+			ok: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := triggersFromRawConfig(tt.config)
+			if ok != tt.ok {
+				t.Fatalf("expected ok=%t, got %t", tt.ok, ok)
+			}
+			if len(got) != len(tt.expected) {
+				t.Fatalf("expected %d triggers, got %d: %#v", len(tt.expected), len(got), got)
+			}
+			for key, expected := range tt.expected {
+				if got[key] != expected {
+					t.Fatalf("trigger %q: expected %#v, got %#v", key, expected, got[key])
+				}
+			}
+		})
+	}
+}
+
+func TestTriggerCount(t *testing.T) {
+	triggerMap := cty.MapVal(map[string]cty.Value{
+		"a": cty.StringVal("1"),
+		"b": cty.StringVal("2"),
+	})
+
+	tests := []struct {
+		name     string
+		raw      cty.Value
+		expected int
+		ok       bool
+	}{
+		{
+			name: "null config",
+			raw:  cty.NullVal(cty.DynamicPseudoType),
+		},
+		{
+			name: "unset triggers",
+			raw: cty.ObjectVal(map[string]cty.Value{
+				"triggers": cty.NullVal(cty.Map(cty.String)),
+			}),
+			ok: true,
+		},
+		{
+			name: "configured triggers",
+			raw: cty.ObjectVal(map[string]cty.Value{
+				"triggers": triggerMap,
+			}),
+			expected: 2,
+			ok:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := triggerCount(tt.raw)
+			if ok != tt.ok {
+				t.Fatalf("expected ok=%t, got %t", tt.ok, ok)
+			}
+			if got != tt.expected {
+				t.Fatalf("expected count %d, got %d", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestCustomDiffMarksChangedTriggersComputed(t *testing.T) {
+	state := &terraform.InstanceState{
+		ID: "123",
+		Attributes: map[string]string{
+			"host":                               "example.com",
+			"user":                               "root",
+			"agent":                              "true",
+			"when":                               "create",
+			"port":                               "22",
+			"bastion_port":                       "22",
+			"timeout":                            "5m",
+			"retry_delay":                        "10s",
+			"commands_after_file_changes":        "true",
+			"ignore_no_supported_methods_remain": "false",
+			"triggers.%":                         "1",
+			"triggers.config_md5":                "old",
+			"result":                             "old result",
+		},
+	}
+	config := terraform.NewResourceConfigRaw(map[string]interface{}{
+		"host":  "example.com",
+		"user":  "root",
+		"agent": true,
+		"triggers": map[string]interface{}{
+			"config_md5": "new",
+		},
+	})
+
+	diff, err := resourceResource().Diff(context.Background(), state, config, nil)
+	if err != nil {
+		t.Fatalf("unexpected diff error: %v", err)
+	}
+	if diff == nil {
+		t.Fatal("expected a diff")
+	}
+	if !diff.RequiresNew() {
+		t.Fatal("expected trigger change to require replacement")
+	}
+	triggersDiff := diff.Attributes["triggers.%"]
+	if triggersDiff == nil || !triggersDiff.NewComputed {
+		t.Fatalf("expected triggers to be marked computed, got %#v", triggersDiff)
+	}
+	resultDiff := diff.Attributes["result"]
+	if resultDiff == nil || !resultDiff.NewComputed {
+		t.Fatalf("expected result to be marked computed, got %#v", resultDiff)
 	}
 }

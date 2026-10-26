@@ -60,10 +60,44 @@ func resourceResource() *schema.Resource {
 }
 
 func customDiff(_ context.Context, d *schema.ResourceDiff, _ interface{}) error {
-	if d.HasChange("file") || d.HasChange("commands") {
-		_ = d.SetNewComputed("result")
+	triggersChanged := d.HasChange("triggers")
+	if !triggersChanged {
+		configured, configuredKnown := triggerCount(d.GetRawConfig())
+		prior, priorKnown := triggerCount(d.GetRawState())
+		triggersChanged = configuredKnown && priorKnown && configured == 0 && prior > 0
+	}
+	if d.HasChange("file") || d.HasChange("commands") || triggersChanged {
+		if err := d.SetNewComputed("result"); err != nil {
+			return err
+		}
+	}
+	if triggersChanged {
+		// A trigger can be derived from an attribute that another provider only
+		// finalizes during apply. Marking changed triggers as unknown lets the
+		// applied value be recorded without Terraform reporting an inconsistent
+		// final plan. ForceNew still guarantees the resource is replaced.
+		if err := d.SetNewComputed("triggers"); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// triggerCount returns the number of configured trigger entries. The bool is
+// false when the value is not available or not yet known.
+func triggerCount(raw cty.Value) (int, bool) {
+	if raw.IsNull() || !raw.IsKnown() || !raw.Type().IsObjectType() || !raw.Type().HasAttribute("triggers") {
+		return 0, false
+	}
+
+	triggers := raw.GetAttr("triggers")
+	if triggers.IsNull() {
+		return 0, true
+	}
+	if !triggers.IsKnown() || !triggers.CanIterateElements() {
+		return 0, false
+	}
+	return triggers.LengthInt(), true
 }
 
 func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
@@ -79,6 +113,7 @@ func sshResourceSchema(sensitive bool) map[string]*schema.Schema {
 			Description: "A map of arbitrary strings that, when changed, will force the 'hsdp_container_host_exec' resource to be replaced, re-running any associated commands.",
 			Type:        schema.TypeMap,
 			Optional:    true,
+			Computed:    true,
 			ForceNew:    true,
 		},
 		"host": {
@@ -423,6 +458,11 @@ func resourceResourceUpdate(ctx context.Context, d *schema.ResourceData, m inter
 	if when == "create" {
 		diags = mainRun(ctx, d, m, true)
 	}
+	if !hasErrors(diags) {
+		if err := setTriggersFromConfig(d); err != nil {
+			return diag.FromErr(err)
+		}
+	}
 	return diags
 }
 
@@ -444,6 +484,9 @@ func resourceResourceCreate(ctx context.Context, d *schema.ResourceData, m inter
 	}
 
 	if !hasErrors(diags) {
+		if err := setTriggersFromConfig(d); err != nil {
+			return diag.FromErr(err)
+		}
 		d.SetId(fmt.Sprintf("%d", rand.Int()))
 	}
 	return diags
@@ -625,6 +668,38 @@ func configuredFiles(rawConfig cty.Value) map[string]provisionFilePresence {
 	}
 
 	return presence
+}
+
+func triggersFromRawConfig(rawConfig cty.Value) (map[string]interface{}, bool) {
+	if rawConfig.IsNull() || !rawConfig.IsKnown() || !rawConfig.Type().IsObjectType() || !rawConfig.Type().HasAttribute("triggers") {
+		return nil, false
+	}
+
+	triggers := rawConfig.GetAttr("triggers")
+	if triggers.IsNull() {
+		return map[string]interface{}{}, true
+	}
+	if !triggers.IsKnown() || !triggers.CanIterateElements() {
+		return nil, false
+	}
+
+	values := make(map[string]interface{}, triggers.LengthInt())
+	for it := triggers.ElementIterator(); it.Next(); {
+		key, value := it.Element()
+		if key.IsNull() || !key.IsKnown() || value.IsNull() || !value.IsKnown() {
+			continue
+		}
+		values[key.AsString()] = value.AsString()
+	}
+	return values, true
+}
+
+func setTriggersFromConfig(d *schema.ResourceData) error {
+	triggers, ok := triggersFromRawConfig(d.GetRawConfig())
+	if !ok {
+		return nil
+	}
+	return d.Set("triggers", triggers)
 }
 
 func configuredFilesForResource(d *schema.ResourceData) map[string]provisionFilePresence {

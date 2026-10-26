@@ -51,8 +51,9 @@ The following arguments are supported:
   the host in some way before you can copy content over e.g. create some directories
 * `bastion_host` - (Optional) The bastion host to use.  When not set, this will be deduced from the container host location
 * `bastion_port` - (Optional) The SSH port to use on the bastion host. Default: `"22"`
-* `triggers` - (Optional, list(string)) An list of strings which when changes will trigger recreation of the resource triggering
-  all create files and commands executions.
+* `triggers` - (Optional, map(string)) A map of values which, when changed, forces recreation of the resource and
+  re-runs all file copies and commands. Trigger values may be derived from computed attributes of other resources and
+  can be resolved during apply.
 * `commands_after_file_changes` - (Optional, bool) Re-run all commands after file changes. Default is `true`.
 * `timeout` - (Optional) Time to wait before considering provisioning as unsuccessful. This spans the copy and command phase. Default is `5m`. Accept seconds (e.g. `300s`) or minutes (e.g. `30m`)
 * `ignore_no_supported_methods_remain` - (Optional, bool) Ignore error handling when received error with no supported methods remain. Default is `false`
