@@ -533,7 +533,7 @@ func mainRun(_ context.Context, d *schema.ResourceData, m interface{}, onUpdate 
 		ssh.Bastion.Key = connection.BastionPrivateKey
 	}
 
-	if onUpdate && !(d.HasChange("file") || d.HasChange("commands")) {
+	if onUpdate && !d.HasChange("file") && !d.HasChange("commands") {
 		return diags
 	}
 
