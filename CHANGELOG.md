@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## v2.8.0
+
+- Add MLKEM key exchange support by updating `golang.org/x/crypto` (#105)
+- Allow an empty `content` value in `file` blocks to create empty files (#108)
+- Tolerate trigger values that are resolved during apply, avoiding inconsistent final plans (#113)
+- Reject invalid `host` and `bastion_host` values with a clear error instead of crashing (#75)
+- Build with Go 1.27.3 and update dependencies
+
 ## v2.6.0
 
 - Fix regression in duration parsing (#65)
