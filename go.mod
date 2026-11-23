@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/hashicorp/go-cty v1.5.0
-	github.com/hashicorp/terraform-plugin-sdk/v2 v2.40.1
+	github.com/hashicorp/terraform-plugin-sdk/v2 v2.41.1
 	github.com/loafoe/easyssh-proxy/v2 v2.0.4
 )
 
